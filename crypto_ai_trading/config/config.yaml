@@ -167,7 +167,7 @@ loss:
   
   # КРИТИЧНО для борьбы со схлопыванием в FLAT
   class_weights: [1.3, 1.3, 0.7]  # [LONG, SHORT, FLAT] - сбалансированные веса
-  use_weighted_sampling: false  # ОТКЛЮЧЕНО - убираем дублирование примеров
+  use_weighted_sampling: true  # ВКЛЮЧЕНО - для балансировки классов без дублирования
   # Динамическая балансировка на основе энтропии батча
   adaptive_class_weights: true
   entropy_min_weight: 0.2  # Минимальный вес для доминирующего класса
@@ -266,7 +266,7 @@ model:
   weight_noise: 0.0     # ОТКЛЮЧЕНО
   temperature_scaling: true  # Калибровка уверенности через температуру
   temperature: 2.0  # Увеличенная температура для снижения уверенности в FLAT
-  confidence_threshold: 0.25  # НИЗКИЙ порог для свободного предсказания
+  confidence_threshold: 0.0  # ОТКЛЮЧЕНО - позволяем модели свободно предсказывать все классы
   dropout_schedule: false    # ОТКЛЮЧЕНО динамическое уменьшение dropout
   
   # Entropy regularization для предотвращения схлопывания
@@ -367,7 +367,7 @@ scheduler:
   name: OneCycleLR  # ИЗМЕНЕНО для динамического LR
   params:
     max_lr: 0.0003     # УМЕНЬШЕН максимальный LR для стабильности
-    pct_start: 0.3   # 30% времени на разгон
+    pct_start: 0.05   # 5% времени на разгон - более мягкий пик LR
     anneal_strategy: cos  # Косинусное затухание
     cycle_momentum: true
     base_momentum: 0.85

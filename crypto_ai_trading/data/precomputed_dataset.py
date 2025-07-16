@@ -399,7 +399,7 @@ def create_precomputed_data_loaders(train_data: pd.DataFrame,
         sampler = WeightedRandomSampler(
             weights=sample_weights,
             num_samples=len(sample_weights),
-            replacement=True
+            replacement=False  # Без дублирования для более стабильного обучения
         )
         
         train_loader = torch.utils.data.DataLoader(

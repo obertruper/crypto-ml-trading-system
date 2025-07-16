@@ -346,6 +346,7 @@ class OptimizedTrainer(Trainer):
                 self.logger.info("   ⚡ Обнаружена RTX 5090 - используются оптимизации для sm_120")
         
         best_val_loss = float('inf')
+        best_macro_f1 = 0.0
         patience_counter = 0
         
         for epoch in range(self.epochs):
@@ -371,18 +372,23 @@ class OptimizedTrainer(Trainer):
                 val_metrics = self.validate_with_enhanced_metrics(val_loader)
                 self.history['val_loss'].append(val_metrics['val_loss'])
                 
-                # Early stopping
-                if val_metrics['val_loss'] < best_val_loss - self.config['model'].get('min_delta', 0.0001):
-                    best_val_loss = val_metrics['val_loss']
+                # Early stopping по macro F1 вместо val loss
+                current_macro_f1 = val_metrics.get('macro_f1_overall', 0.0)
+                
+                if current_macro_f1 > best_macro_f1 + self.config['model'].get('min_delta', 0.001):
+                    best_macro_f1 = current_macro_f1
+                    best_val_loss = val_metrics['val_loss']  # Сохраняем для логирования
                     patience_counter = 0
                     # Сохранение лучшей модели
                     self._save_checkpoint(epoch, val_metrics['val_loss'], is_best=True)
+                    self.logger.info(f"✅ Новая лучшая модель! Macro F1: {best_macro_f1:.4f}")
                 else:
                     patience_counter += 1
                 
                 self.logger.info(f"📈 Train Loss: {train_metrics['loss']:.4f}, "
-                               f"Val Loss: {val_metrics['val_loss']:.4f} "
-                               f"(best: {best_val_loss:.4f}, patience: {patience_counter})")
+                               f"Val Loss: {val_metrics['val_loss']:.4f}, "
+                               f"Macro F1: {val_metrics.get('macro_f1_overall', 0):.4f} "
+                               f"(best F1: {best_macro_f1:.4f}, patience: {patience_counter})")
                 
                 if patience_counter >= self.early_stopping_patience:
                     self.logger.info("⚠️ Early stopping triggered!")
@@ -491,6 +497,36 @@ class OptimizedTrainer(Trainer):
         # Общая directional accuracy (среднее по всем таймфреймам)
         overall_accuracy = np.mean([metrics[f'direction_accuracy_{tf}'] for tf in timeframes])
         metrics['direction_accuracy_overall'] = overall_accuracy
+        
+        # Вычисляем macro F1 для каждого таймфрейма
+        macro_f1_scores = []
+        for i, tf in enumerate(timeframes):
+            # Извлекаем предсказания и цели
+            if hasattr(outputs, '_direction_logits'):
+                direction_logits = outputs._direction_logits[:, i, :]
+                pred_classes = torch.argmax(torch.softmax(direction_logits, dim=-1), dim=-1)
+            else:
+                pred_classes = torch.round(outputs[:, 4+i]).clamp(0, 2).long()
+            true_classes = targets[:, 4+i].long()
+            
+            # Вычисляем F1 для каждого класса
+            f1_scores = []
+            for class_idx in range(3):
+                tp = ((pred_classes == class_idx) & (true_classes == class_idx)).sum().item()
+                fp = ((pred_classes == class_idx) & (true_classes != class_idx)).sum().item()
+                fn = ((pred_classes != class_idx) & (true_classes == class_idx)).sum().item()
+                
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+                f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+                f1_scores.append(f1)
+            
+            macro_f1 = np.mean(f1_scores)
+            metrics[f'macro_f1_{tf}'] = macro_f1
+            macro_f1_scores.append(macro_f1)
+        
+        # Общий macro F1
+        metrics['macro_f1_overall'] = np.mean(macro_f1_scores)
         
         # Общая метрика разнообразия предсказаний
         overall_entropy = np.mean([metrics[f'pred_entropy_{tf}'] for tf in timeframes])
@@ -816,6 +852,9 @@ class OptimizedTrainer(Trainer):
             # Логирование ключевых метрик
             if 'direction_accuracy_overall' in metrics:
                 self.logger.info(f"📊 Direction Accuracy: {metrics['direction_accuracy_overall']:.3f}")
+            
+            if 'macro_f1_overall' in metrics:
+                self.logger.info(f"📊 Macro F1 Score: {metrics['macro_f1_overall']:.3f}")
             
             # Логирование разнообразия предсказаний
             if 'pred_entropy_overall' in metrics:
