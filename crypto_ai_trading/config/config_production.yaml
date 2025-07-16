@@ -1,0 +1,412 @@
+# Оптимизированная конфигурация для финального продакшен обучения
+# Основана на анализе проблем текущего обучения
+
+backtesting:
+  commission: 0.001
+  initial_capital: 100000
+  metrics:
+  - total_return
+  - sharpe_ratio
+  - max_drawdown
+  - win_rate
+  - profit_factor
+  - expectancy
+  - calmar_ratio
+  slippage: 0.0005
+
+bybit:
+  fees:
+    funding_rate: 0.0001
+    maker: 0.0002
+    taker: 0.00055
+  slippage:
+    base: 0.0005
+    market_impact_threshold: 0.01
+
+data:
+  end_date: '2025-06-29'
+  interval_minutes: 15
+  start_date: '2022-01-01'  # Сократили период для более релевантных данных
+  # Топ-10 символов с высоким объемом и стабильными паттернами
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOTUSDT
+  - LINKUSDT
+  - MATICUSDT
+  test_ratio: 0.2
+  train_ratio: 0.6
+  val_ratio: 0.2
+  train_stride: 1
+  val_stride: 4
+  # Балансировка классов
+  balance_classes: true
+  balance_method: "class_weight"  # или "oversample"
+  
+database:
+  database: crypto_trading
+  host: localhost
+  max_overflow: 20
+  password: ruslan
+  pool_size: 10
+  port: 5555
+  table: raw_market_data
+  user: ruslan
+
+features:
+  # Добавляем более информативные признаки
+  enhanced_features:
+  - price_acceleration  # Вторая производная цены
+  - volume_momentum     # Изменение объема
+  - order_flow_imbalance  # Дисбаланс потока ордеров
+  - microstructure_signals  # Микроструктурные сигналы
+  
+  # Оригинальные признаки
+  technical:
+  - name: sma
+    periods: [10, 20, 50]
+  - name: ema
+    periods: [12, 26]
+  - name: rsi
+    period: 14
+  - name: macd
+    fast: 12
+    slow: 26
+    signal: 9
+  - name: bollinger_bands
+    period: 20
+    std_dev: 2
+  - name: atr
+    period: 14
+  - name: volume_profile
+    bins: 20
+  
+  temporal:
+  - hour_of_day
+  - day_of_week
+  - month_of_year
+  - is_weekend
+
+logging:
+  handlers:
+  - console
+  - file
+  level: INFO
+  log_dir: experiments/logs
+  tensorboard:
+    enabled: true
+    log_dir: experiments/tensorboard
+  # Дополнительное логирование для отладки
+  log_predictions: true
+  log_confusion_matrix: true
+  log_class_distribution: true
+
+loss:
+  name: directional_multitask
+  
+  # Сбалансированные веса для предотвращения схлопывания
+  task_weights:
+    future_returns: 0.8      # Увеличен для баланса
+    directions: 0.8          # Уменьшен с 1.0
+    long_levels: 0.6         # Умеренный
+    short_levels: 0.6        # Умеренный
+    risk_metrics: 0.5        # Увеличен для лучшего риск-менеджмента
+  
+  # Умеренные параметры для стабильного обучения
+  large_move_threshold: 0.003  # 0.3% - разумный порог
+  large_move_weight: 5.0       # Умеренный вес для важных движений
+  
+  # Focal Loss с умеренными параметрами
+  focal_alpha: 0.25           # Стандартное значение
+  focal_gamma: 2.0            # Умеренный фокус на сложных примерах
+  
+  # Умеренный штраф за ошибки направления
+  wrong_direction_penalty: 2.0  # Уменьшен для предотвращения схлопывания
+  
+  # Отключаем динамическую балансировку для стабильности
+  use_dynamic_class_weights: false
+  class_weight_momentum: 0.9
+  
+  # Сбалансированные веса для предотвращения схлопывания
+  # [LONG, SHORT, FLAT]
+  class_weights: [1.5, 1.5, 0.5]  # Усиливаем LONG/SHORT, подавляем FLAT
+  
+  # Использовать WeightedRandomSampler для балансировки батчей
+  use_weighted_sampling: true
+  
+  # Автоматическая коррекция при схлопывании
+  auto_adjust_on_collapse: true
+  collapse_threshold: 0.8  # Если один класс > 80%
+  min_entropy: 0.5  # Минимальная энтропия предсказаний
+
+model:
+  # Оптимизированная архитектура для высокой точности
+  activation: gelu
+  batch_norm: true
+  batch_size: 512  # Увеличено для лучшей утилизации GPU RTX 5090
+  context_window: 96  # 24 часа исторических данных
+  
+  # Оптимизированная архитектура для поэтапного обучения
+  d_ff: 768  # Увеличено для большей выразительности
+  d_model: 384  # Увеличено для лучшего обучения
+  
+  # Адаптивная регуляризация (будет меняться по этапам)
+  dropout: 0.2  # Начальный низкий dropout
+  attention_dropout: 0.1  # Низкий для начала
+  weight_decay: 0.01  # Умеренная L2 регуляризация
+  
+  # Архитектура
+  e_layers: 2  # Увеличено для большей выразительности
+  n_heads: 8  # Оптимально для d_model=384
+  
+  # Параметры обучения
+  early_stopping_patience: 30  # Уменьшено с 50
+  epochs: 100
+  gradient_clip: 0.1  # Агрессивное ограничение градиентов
+  
+  # Низкий learning rate для стабильности
+  learning_rate: 0.00001  # В 10 раз меньше для плавного обучения
+  warmup_steps: 5000  # Долгий разогрев
+  
+  # Настройки
+  individual: false
+  input_size: 240  # Будет автоматически обновлено
+  min_delta: 0.0005  # Более чувствительный
+  name: UnifiedPatchTST
+  output_size: 20  # Текущая версия
+  overfitting_threshold: 0.15  # Более строгий
+  
+  # Патчи
+  patch_len: 12  # Уменьшено с 16
+  stride: 6  # Уменьшено с 8
+  
+  # GPU оптимизации
+  use_amp: true
+  amp_dtype: float16
+  compile_model: false
+  use_tf32: true
+  
+  # Gradient accumulation для большого эффективного батча
+  gradient_accumulation_steps: 4  # batch_size * 4 = 1024 эффективный
+  
+  # Расписание learning rate
+  lr_scheduler:
+    type: "CosineAnnealingWarmRestarts"
+    T_0: 10  # Перезапуск каждые 10 эпох
+    T_mult: 2
+    eta_min: 0.0000001
+    
+  # Целевые переменные (20 для совместимости)
+  target_variables:
+    # A. Базовые возвраты (4)
+    - future_return_15m
+    - future_return_1h
+    - future_return_4h
+    - future_return_12h
+    # B. Направление движения (4)
+    - direction_15m
+    - direction_1h
+    - direction_4h
+    - direction_12h
+    # C. Достижение уровней прибыли LONG (4)
+    - long_will_reach_1pct_4h
+    - long_will_reach_2pct_4h
+    - long_will_reach_3pct_12h
+    - long_will_reach_5pct_12h
+    # D. Достижение уровней прибыли SHORT (4)
+    - short_will_reach_1pct_4h
+    - short_will_reach_2pct_4h
+    - short_will_reach_3pct_12h
+    - short_will_reach_5pct_12h
+    # E. Риск-метрики (4)
+    - max_drawdown_1h
+    - max_rally_1h
+    - max_drawdown_4h
+    - max_rally_4h
+    
+  task_type: trading
+  target_window: 1
+  pred_len: 1
+  
+  # Усиленные техники регуляризации
+  label_smoothing: 0.1  # Умеренное значение для лучшей классификации
+  mixup_alpha: 0.4  # Усиленная аугментация данных
+  weight_noise: 0.02  # Увеличен шум для регуляризации
+  temperature_scaling: false  # Отключаем для стабильности в начале
+  confidence_threshold: 0.7  # Увеличен порог
+  direction_confidence_threshold: 0.45  # Минимальная уверенность для LONG/SHORT
+  direction_l2_weight: 0.001  # L2 регуляризация для direction head
+  dropout_schedule: true  # Включено для адаптивной регуляризации
+  
+  # Дополнительные улучшения
+  use_improvements: false
+  feature_attention: false  # Упрощаем модель
+  multi_scale_patches: false
+  
+  # EMA для стабильности предсказаний
+  use_ema: true
+  ema_decay: 0.999  # Экспоненциальное сглаживание весов
+  
+  # Специальная инициализация для борьбы со схлопыванием
+  direction_head_init:
+    method: "balanced"  # Инициализация с учетом баланса классов
+    bias_init: "zeros"  # Или "balanced" для начального bias
+    weight_scale: 0.1  # Масштаб инициализации весов
+
+# Fine-tuning параметры для дообучения существующей модели
+fine_tuning:
+  enabled: true
+  freeze_backbone: true  # Заморозить основную часть модели
+  unfreeze_layers:  # Слои для дообучения
+    - direction  # Direction prediction heads
+    - confidence  # Confidence layers
+    - output_projection  # Финальные проекции
+  learning_rate: 0.00002  # Меньший LR для fine-tuning
+  mixup_alpha: 0.3  # Усиленный mixup для лучшей генерализации
+  noise_injection_std: 0.01  # Добавление шума к features
+  curriculum_learning: true  # Начать с простых примеров
+  epochs: 30  # Меньше эпох для fine-tuning
+  label_smoothing: 0.1  # Умеренное значение для классификации
+  temperature_init: 1.5  # Начальная температура для scaling
+
+optimizer:
+  name: AdamW
+  params:
+    betas: [0.9, 0.999]
+    eps: 0.00000001
+    weight_decay: 0.1  # Увеличено в 10 раз для сильной L2 регуляризации
+    amsgrad: true
+
+performance:
+  cache_dir: cache/
+  cache_features: true
+  data_parallel: true
+  device: cuda
+  mixed_precision: true
+  num_workers: 4
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 2
+  gpu_cache_clear_freq: 50  # Реже для производительности
+  monitor_gpu_memory: true
+  dataloader_pin_memory: true
+  dataloader_drop_last: true
+  use_precomputed_dataset: true
+
+scheduler:
+  name: ReduceLROnPlateau
+  params:
+    mode: min  # Минимизация loss
+    factor: 0.5  # Уменьшение LR в 2 раза
+    patience: 5  # Эпохи без улучшения
+    min_lr: 0.0000001  # Минимальный LR (1e-7)
+
+# Специальные настройки для продакшена
+risk_management:
+  max_concurrent_positions: 10
+  max_positions_per_symbol: 1
+  partial_close_sizes:
+  - 40
+  - 40
+  - 20
+  position_sizing:
+    correlation_adjustment: true
+    max_position_pct: 10.0
+    max_risk_per_trade: 0.5
+    method: kelly_criterion
+  risk_reward_ratio: 3.0
+  stop_loss_pct: 2.0
+  take_profit_targets:
+  - 1.5
+  - 2.5
+  - 4.0
+  volatility_adjustment:
+    altcoin_risk_multiplier: 0.7
+    high_vol_multipliers:
+      BTCUSDT: 1.0
+      ETHUSDT: 1.0
+    use_atr: true
+
+production:
+  # Поэтапное обучение для выхода из локального минимума
+  staged_training:
+    enabled: true
+    stages:
+      - name: "direction_warmup"
+        epochs: 10
+        active_losses: ["directions"]  # Только direction loss
+        learning_rate: 0.0001  # Умеренный LR для стабильности
+        dropout: 0.2  # Низкий dropout
+        label_smoothing: 0.0  # Отключаем
+        class_weights: [1.5, 1.5, 0.8]  # Усиливаем LONG/SHORT
+        gradient_clip: 0.5  # Агрессивное ограничение градиентов
+        description: "Разогрев обучения направлений"
+      - name: "direction_stabilize"
+        epochs: 10
+        active_losses: ["directions"]
+        learning_rate: 0.0001
+        dropout: 0.3
+        label_smoothing: 0.1
+        class_weights: [1.3, 1.3, 1.0]
+        description: "Стабилизация предсказаний направлений"
+      - name: "add_returns"
+        epochs: 10
+        active_losses: ["directions", "future_returns"]
+        learning_rate: 0.00005
+        dropout: 0.4
+        label_smoothing: 0.2
+        description: "Добавляем предсказание returns"
+      - name: "full_training"
+        epochs: 70
+        active_losses: ["all"]  # Все losses
+        learning_rate: 0.00001
+        dropout: 0.5
+        label_smoothing: 0.1
+        description: "Полное обучение со всеми losses"
+  
+  # Валидация
+  validation_frequency: 1  # Каждую эпоху
+  save_best_only: true
+  save_frequency: 5  # Checkpoint каждые 5 эпох
+  
+  # Мониторинг
+  track_metrics:
+    - direction_accuracy_per_class
+    - confusion_matrix
+    - profit_factor
+    - sharpe_ratio
+    - prediction_distribution
+  
+  # Ансамблирование
+  ensemble:
+    enabled: true
+    n_models: 5
+    voting: "soft"
+    diversity_bonus: 0.1
+
+trading:
+  max_daily_trades: 10  # Уменьшено для качества
+  max_positions: 3  # Уменьшено
+  min_confidence_threshold: 0.7  # Увеличено
+  multiframe_confirmation: true
+  rebalance_interval: 1h
+  # Дополнительные фильтры
+  require_volume_confirmation: true
+  avoid_news_hours: true
+  min_volatility: 0.005  # Минимальная волатильность для входа
+
+validation:
+  max_drawdown: 0.15  # Более строгий
+  min_sharpe_ratio: 2.0  # Увеличено
+  min_win_rate: 0.52  # Реалистичный минимум
+  min_direction_accuracy: 0.45  # Новый критерий
+  statistical_tests:
+  - sharpe_ratio_test
+  - information_ratio
+  - monte_carlo_permutation
+  - direction_accuracy_test

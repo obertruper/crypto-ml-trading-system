@@ -1,0 +1,113 @@
+# Оптимальная конфигурация XGBoost v3 для криптотрейдинга
+# с учетом иерархии признаков и найденных оптимальных параметров
+
+database:
+  host: localhost
+  port: 5555
+  user: ruslan
+  name: crypto_trading
+
+paths:
+  cache_dir: "cache"
+  log_dir: "logs"
+  model_dir: "models"
+
+training:
+  # Основные параметры
+  task_type: "classification_binary"
+  test_mode: true  # Начнем с теста на 2 монетах
+  use_cache: true
+  save_models: true
+  save_plots: true
+  
+  # Отбор признаков - используем новый иерархический метод
+  feature_selection_method: "hierarchical"
+  feature_selection_top_k: 60
+  primary_features_ratio: 0.8    # 80% технических индикаторов  
+  auxiliary_features_ratio: 0.02 # 2% временных признаков (уменьшено для борьбы с переобучением)
+  
+  # Параметры ансамбля
+  ensemble_size: 3  # Уменьшаем для скорости
+  ensemble_method: "weighted_voting"
+  
+  # Параметры разделения данных
+  test_size: 0.2
+  validation_size: 0.2
+  
+  # Балансировка классов
+  balance_method: "adasyn"
+  
+  # Оптимизация - пропускаем, используем найденные параметры
+  optimize: false
+  optuna_trials: 0
+  optuna_cv_folds: 5
+  
+  # Пороги и метрики
+  classification_threshold: 1.5  # Порог прибыли в % для определения положительного класса
+  early_stopping_rounds: 50
+
+model:
+  # Найденные оптимальные параметры из Optuna
+  objective: "binary:logistic"
+  eval_metric: "auc"
+  max_depth: 8  # Уменьшаем с 12 для избежания переобучения
+  learning_rate: 0.1  # Уменьшаем с 0.185 для стабильности
+  n_estimators: 1000
+  subsample: 0.8  # Уменьшаем с 0.949
+  colsample_bytree: 0.75  # Уменьшаем с 0.801
+  colsample_bylevel: 0.7  # Новый параметр
+  
+  # Регуляризация - увеличиваем для крипто
+  gamma: 1.0  # Увеличиваем с 0.237
+  reg_alpha: 5.0  # Увеличиваем с 1.758
+  reg_lambda: 5.0  # Увеличиваем с 2.044
+  min_child_weight: 20  # Увеличиваем для стабильности
+  
+  # Остальные параметры
+  tree_method: "hist"
+  random_state: 42
+
+# Веса для разных категорий признаков
+feature_weights:
+  # Технические индикаторы - максимальный приоритет
+  rsi_*: 2.0
+  macd_*: 2.0
+  bb_*: 1.8
+  adx_*: 1.8
+  volume_*: 1.5
+  atr*: 1.5
+  stoch_*: 1.5
+  
+  # BTC корреляция - средний приоритет
+  btc_*: 1.2
+  ema_*: 1.1
+  sma_*: 1.1
+  
+  # Временные признаки - минимальный приоритет
+  market_regime_*: 0.5
+  dow_*: 0.3
+  hour_*: 0.3
+  is_*: 0.5
+
+# Новые параметры для крипто-специфичной обработки
+crypto_specific:
+  # Фильтрация данных
+  min_volume_filter: 100000  # Минимальный объем торгов в USDT
+  volatility_filter: true    # Исключать периоды низкой волатильности
+  
+  # BTC доминирование
+  use_btc_dominance: true
+  btc_dominance_features: ["btc_dominance_change", "altcoin_season_index"]
+  
+  # Корреляционная динамика
+  correlation_window: [5, 20, 60]  # Окна для расчета корреляций
+  correlation_features: ["rolling_correlation_change", "correlation_breakout"]
+  
+  # Микроструктура рынка
+  market_microstructure: true
+  microstructure_features: ["bid_ask_spread", "order_flow_imbalance"]
+
+# Логирование
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

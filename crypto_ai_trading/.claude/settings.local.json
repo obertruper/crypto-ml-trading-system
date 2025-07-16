@@ -1,0 +1,136 @@
+{
+  "projectName": "crypto_ai_trading",
+  "description": "ML система для криптотрейдинга с PatchTST архитектурой",
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "mcp__*"
+    ],
+    "deny": []
+  },
+  "lspConfig": {
+    "autoStart": true,
+    "serverPath": "lsp_server/enhanced_lsp_server.py",
+    "pythonPath": "lsp_server/venv/bin/python",
+    "features": {
+      "autoContext": true,
+      "sequentialThinking": true,
+      "historyTracking": true,
+      "riskAnalysis": true
+    }
+  },
+  "fileImportance": {
+    "critical": [
+      "models/patchtst.py",
+      "models/patchtst_improved.py",
+      "config/config.yaml",
+      "data/data_loader.py",
+      "data/dataset.py",
+      "data/feature_engineering.py",
+      "training/trainer.py",
+      "training/optimizer.py",
+      "models/components/attention.py",
+      "models/components/patch_embedding.py",
+      "models/ensemble.py",
+      "trading/risk_manager.py",
+      "utils/db_utils.py"
+    ],
+    "important": [
+      "main.py",
+      "train_model.py",
+      "trading/signals.py",
+      "trading/position_sizer.py",
+      "trading/backtester.py",
+      "training/validator.py",
+      "utils/config_validator.py",
+      "utils/model_utils.py",
+      "data/bybit_loader.py",
+      "models/tft.py",
+      "trading/portfolio_manager.py"
+    ],
+    "standard": [
+      "utils/logger.py",
+      "utils/metrics.py",
+      "utils/visualization.py",
+      "monitor_training.py",
+      "utils/data_utils.py",
+      "utils/technical_indicators.py",
+      "notebooks/*.ipynb"
+    ],
+    "lowPriority": [
+      "lsp_server/*",
+      "scripts/*",
+      "tests/*",
+      "*.md",
+      "*.sh",
+      "logs/*",
+      "__pycache__/*"
+    ]
+  },
+  "contextRules": {
+    "alwaysInclude": [
+      "CLAUDE.md",
+      "config/config.yaml"
+    ],
+    "analysisDepth": {
+      "critical": {
+        "sequentialThinking": true,
+        "steps": 5,
+        "checkDependencies": true,
+        "riskAnalysis": "deep",
+        "requireConfirmation": true
+      },
+      "important": {
+        "sequentialThinking": true,
+        "steps": 3,
+        "checkDependencies": true,
+        "riskAnalysis": "standard"
+      },
+      "standard": {
+        "sequentialThinking": false,
+        "checkDependencies": true,
+        "riskAnalysis": "basic"
+      },
+      "lowPriority": {
+        "sequentialThinking": false,
+        "checkDependencies": false,
+        "riskAnalysis": "none"
+      }
+    }
+  },
+  "integrations": {
+    "context7": {
+      "enabled": true,
+      "autoAppend": true,
+      "libraries": [
+        "pytorch",
+        "postgresql",
+        "sqlalchemy",
+        "pandas",
+        "numpy",
+        "scikit-learn"
+      ]
+    },
+    "database": {
+      "type": "postgresql",
+      "port": 5555,
+      "autoConnect": false
+    },
+    "vastai": {
+      "remoteHost": "ssh6.vast.ai",
+      "remotePort": 30197,
+      "syncEnabled": true
+    }
+  },
+  "workflowDefaults": {
+    "beforeCodeChange": [
+      "lsp.getContext",
+      "context7.getDoc",
+      "thinking.analyze"
+    ],
+    "afterCodeChange": [
+      "lsp.updateIndex",
+      "history.record"
+    ]
+  }
+}

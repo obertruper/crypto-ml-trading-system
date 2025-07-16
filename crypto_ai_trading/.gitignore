@@ -1,0 +1,220 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+venv_crypto/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Project specific
+models_saved/
+results/
+logs/
+experiments/
+*.pth
+*.pkl
+*.csv
+*.h5
+*.hdf5
+
+# Data files
+data/*.csv
+data/*.parquet
+data/*.json
+data/processed/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials
+secrets.yaml
+.env.local
+.env.production
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Cache
+.cache/
+*.cache
+
+# Database dumps
+*.sql
+*.dump
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+
+# Backup files
+*.backup_*
+*_backup.*
+
+# Temporary installation artifacts
+=*
+
+# Notebooks outputs
+notebooks/*.html
+notebooks/*.pdf
+notebooks/data_exploration_summary.json
+notebooks/feature_importance_analysis.csv
+notebooks/recommended_features.json
+notebooks/evaluation_report_*.json
+# MCP files
+.mcp_memory/
+.env.mcp
+
+# LSP Server files
+lsp_server/venv/
+lsp_server/.lsp_data/
+lsp_server/.lsp_cache/
+lsp_server/*.log
+lsp_server/*.pid
+lsp_server/__pycache__/
+lsp_server/.mypy_cache/
+lsp_server/lsp_profile.json
+
+# Metabase data
+metabase-data/
+
+# Trading database backups
+trading_db_backup.sql
+*.sql.gz
+*.db.backup
+
+# Large cache files
+cache/*.pkl
+cache/features/*.pkl
+
+# Large files
+models_saved/*.pth
+cache/*.pkl
+*.sql

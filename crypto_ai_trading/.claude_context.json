@@ -1,0 +1,68 @@
+{
+  "project_name": "crypto_ai_trading",
+  "project_root": "/Users/ruslan/PycharmProjects/LLM TRANSFORM/crypto_ai_trading",
+  "main_components": {
+    "models": {
+      "path": "models/",
+      "description": "ML модели (PatchTST, ансамбли)",
+      "key_files": [
+        "patchtst.py",
+        "ensemble.py"
+      ]
+    },
+    "data": {
+      "path": "data/",
+      "description": "Загрузка и обработка данных",
+      "key_files": [
+        "data_loader.py",
+        "feature_engineering.py"
+      ]
+    },
+    "trading": {
+      "path": "trading/",
+      "description": "Торговые стратегии и риск-менеджмент",
+      "key_files": [
+        "signals.py",
+        "risk_management.py",
+        "position_manager.py"
+      ]
+    },
+    "training": {
+      "path": "training/",
+      "description": "Обучение и валидация моделей",
+      "key_files": [
+        "trainer.py",
+        "validator.py"
+      ]
+    },
+    "utils": {
+      "path": "utils/",
+      "description": "Утилиты и визуализация",
+      "key_files": [
+        "metrics.py",
+        "visualization.py",
+        "logger.py"
+      ]
+    }
+  },
+  "key_features": [
+    "PatchTST архитектура для временных рядов",
+    "100+ технических индикаторов",
+    "Многозадачное обучение (цена + вероятности TP/SL)",
+    "6 стратегий управления позициями",
+    "Ансамблирование моделей",
+    "PostgreSQL база данных на порту 5555"
+  ],
+  "current_focus": "Улучшение предсказаний и риск-менеджмента",
+  "lsp_features": {
+    "enabled": true,
+    "port": 2087,
+    "capabilities": [
+      "Автодополнение с контекстом",
+      "Навигация по определениям",
+      "Поиск использований",
+      "Анализ импортов и зависимостей",
+      "Генерация контекста для LLM"
+    ]
+  }
+}

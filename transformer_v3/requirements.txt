@@ -1,0 +1,32 @@
+# Transformer v3.0 Dependencies
+# Основано на XGBoost v3.0 с добавлением TensorFlow
+
+# Основные зависимости
+tensorflow>=2.12.0
+numpy>=1.21.0
+pandas>=1.5.0
+scikit-learn>=1.2.0
+pyyaml>=6.0
+psycopg2-binary>=2.9.0
+
+# Визуализация
+matplotlib>=3.6.0
+seaborn>=0.12.0
+plotly>=5.0.0
+
+# Метрики и утилиты
+tqdm>=4.64.0
+joblib>=1.2.0
+
+# Дополнительные библиотеки из XGBoost v3
+imbalanced-learn>=0.10.0  # для SMOTE
+optuna>=3.0.0  # для гиперпараметр оптимизации
+
+# Для обработки сигналов и фильтрации шума
+PyWavelets>=1.4.0  # для wavelet denoising
+scipy>=1.9.0  # для фильтров и обработки сигналов
+
+# Опциональные зависимости для улучшенной функциональности
+# tensorboard  # уже включен в tensorflow
+# jupyter  # для ноутбуков
+# ipywidgets  # для интерактивных виджетов

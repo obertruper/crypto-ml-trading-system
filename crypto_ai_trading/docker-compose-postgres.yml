@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres_crypto:
+    image: postgres:15-alpine
+    container_name: postgres_crypto_trading
+    environment:
+      POSTGRES_USER: ruslan
+      POSTGRES_PASSWORD: ruslan
+      POSTGRES_DB: crypto_trading
+    ports:
+      - "5555:5432"  # Маппинг порта 5555 на хосте к 5432 в контейнере
+    volumes:
+      - postgres_crypto_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruslan -d crypto_trading"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_crypto_data:
+    driver: local

@@ -1,0 +1,17 @@
+{
+  "name": "llm-transform",
+  "version": "1.0.0",
+  "description": "Система машинного обучения для прогнозирования движения цен криптовалют на основе технических индикаторов и исторических данных.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "^2025.7.1",
+    "@modelcontextprotocol/server-postgres": "^0.6.2",
+    "@modelcontextprotocol/server-puppeteer": "^2025.5.12"
+  }
+}

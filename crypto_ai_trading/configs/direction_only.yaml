@@ -1,0 +1,101 @@
+# Конфигурация для специализированной модели предсказания направления
+# Оптимизирована для максимальной directional accuracy
+
+model:
+  name: DirectionPredictor
+  context_window: 168  # 42 часа истории
+  
+  # Архитектурные параметры
+  d_model: 512  # Увеличенная размерность
+  n_heads: 8
+  e_layers: 4   # Глубже для лучшего понимания паттернов
+  d_ff: 2048
+  dropout: 0.3  # Больше регуляризации
+  
+  # Обучение
+  batch_size: 256  # Меньше для лучшей генерализации
+  epochs: 100
+  learning_rate: 0.0001  # Выше для быстрой сходимости
+  weight_decay: 0.001
+  gradient_clip: 0.5
+  
+  # Early stopping
+  early_stopping_patience: 15
+  min_delta: 0.001
+  
+  # Целевые переменные - только направления
+  target_variables:
+    - direction_15m
+    - direction_1h
+    - direction_4h
+    - direction_12h
+
+# Оптимизатор
+optimizer:
+  name: AdamW
+  params:
+    betas: [0.9, 0.999]
+    eps: 1.0e-08
+    weight_decay: 0.001
+    amsgrad: true
+
+# Scheduler с перезапусками для выхода из локальных минимумов
+scheduler:
+  name: CosineAnnealingWarmRestarts
+  params:
+    T_0: 10      # Первый цикл 10 эпох
+    T_mult: 2    # Каждый следующий в 2 раза длиннее
+    eta_min: 1.0e-06
+
+# Специальная loss для торговли
+loss:
+  name: directional_trading
+  commission: 0.001  # Bybit taker fee
+  profit_focus_weight: 10.0
+  class_weights: [1.0, 1.0, 0.5]  # UP, DOWN, FLAT - меньше вес для FLAT
+
+# Данные - фокус на качестве
+data:
+  # Используем только ликвидные символы с хорошей историей
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - DOTUSDT
+    - LINKUSDT
+    - MATICUSDT
+  
+  # Больше данных для обучения
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  
+  # Все данные для обучения direction
+  train_stride: 1
+  val_stride: 2
+
+# Производительность
+performance:
+  device: cuda
+  mixed_precision: true
+  num_workers: 4
+  pin_memory: true
+  gradient_accumulation_steps: 2
+  
+# Метрики для отслеживания
+metrics:
+  primary: directional_accuracy  # Основная метрика
+  secondary:
+    - win_rate
+    - profit_factor
+    - sharpe_ratio
+  
+  # Пороги для оценки готовности
+  thresholds:
+    directional_accuracy: 0.55  # Минимум для прибыльности
+    win_rate: 0.50
+    profit_factor: 1.2

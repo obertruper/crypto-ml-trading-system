@@ -1,0 +1,166 @@
+# Enhanced Python LSP Server Configuration
+
+server:
+  name: "enhanced-python-lsp"
+  version: "1.0.0"
+  host: "127.0.0.1"
+  port: 2087
+  log_level: "INFO"
+  log_file: "enhanced-lsp.log"
+
+indexing:
+  # Расширения файлов для индексации
+  extensions:
+    - ".py"
+    - ".pyi"
+    - ".pyx"
+  
+  # Исключенные директории
+  exclude_dirs:
+    - "__pycache__"
+    - ".git"
+    - ".venv"
+    - "venv"
+    - "node_modules"
+    - ".tox"
+    - "build"
+    - "dist"
+    - "*.egg-info"
+  
+  # Максимальный размер файла для индексации (в байтах)
+  max_file_size: 1048576  # 1MB
+  
+  # Использовать многопоточность для индексации
+  parallel_indexing: true
+  max_workers: 4
+
+context:
+  # Максимальный размер контекстного окна (в токенах)
+  max_tokens: 1000000
+  
+  # Количество связанных файлов для включения в контекст
+  max_related_files: 5
+  
+  # Количество последних изменений для отслеживания
+  max_recent_edits: 10
+  
+  # Включать документацию в контекст
+  include_documentation: true
+  
+  # Максимальная глубина для анализа импортов
+  import_depth: 3
+
+llm_integration:
+  # Оптимизация для работы с LLM
+  optimize_for_llm: true
+  
+  # Формат контекста для LLM
+  context_format: "markdown"  # или "json"
+  
+  # Включать примеры использования в автодополнение
+  include_examples: true
+  
+  # Генерировать сводки для больших файлов
+  generate_summaries: true
+  summary_max_lines: 50
+
+features:
+  # Включенные возможности
+  completion:
+    enabled: true
+    trigger_characters: [".", "(", "[", '"', "'", " "]
+    max_items: 50
+    include_snippets: true
+    
+  hover:
+    enabled: true
+    include_source: true
+    include_references: true
+    
+  definition:
+    enabled: true
+    include_implementations: true
+    
+  references:
+    enabled: true
+    include_tests: true
+    max_results: 100
+    
+  symbols:
+    enabled: true
+    include_private: false
+    hierarchical: true
+    
+  diagnostics:
+    enabled: true
+    lint_on_save: true
+    linters:
+      - "pylint"
+      - "flake8"
+      - "mypy"
+    
+  formatting:
+    enabled: true
+    formatter: "black"
+    format_on_save: false
+    
+  code_actions:
+    enabled: true
+    quick_fixes: true
+    refactoring: true
+
+cache:
+  # Кеширование для улучшения производительности
+  enabled: true
+  
+  # Директория для кеша
+  directory: ".lsp_cache"
+  
+  # Время жизни кеша (в секундах)
+  ttl: 3600
+  
+  # Максимальный размер кеша (в МБ)
+  max_size: 100
+
+performance:
+  # Настройки производительности
+  debounce_interval: 500  # мс
+  
+  # Ограничение на количество одновременных операций
+  max_concurrent_operations: 10
+  
+  # Использовать инкрементальную синхронизацию
+  incremental_sync: true
+  
+  # Профилирование производительности
+  enable_profiling: false
+  profile_output: "lsp_profile.json"
+
+documentation:
+  # Источники документации
+  sources:
+    - type: "builtin"
+      enabled: true
+    - type: "docstrings"
+      enabled: true
+    - type: "external"
+      enabled: true
+      paths:
+        - "./docs"
+        - "./README.md"
+    - type: "online"
+      enabled: false
+      apis:
+        - "https://docs.python.org/3/"
+  
+  # Парсинг документации
+  parse_numpy_style: true
+  parse_google_style: true
+  parse_sphinx_style: true
+
+experimental:
+  # Экспериментальные функции
+  semantic_highlighting: true
+  ai_suggestions: true
+  smart_imports: true
+  auto_type_hints: true

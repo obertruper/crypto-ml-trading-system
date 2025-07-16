@@ -1,0 +1,312 @@
+# Конфигурация для борьбы с переобучением
+# Основана на анализе результатов предыдущего обучения
+
+backtesting:
+  commission: 0.001
+  initial_capital: 100000
+  metrics:
+  - total_return
+  - sharpe_ratio
+  - max_drawdown
+  - win_rate
+  - profit_factor
+  slippage: 0.0005
+
+bybit:
+  fees:
+    funding_rate: 0.0001
+    maker: 0.0002
+    taker: 0.00055
+
+data:
+  end_date: '2025-06-29'
+  interval_minutes: 15
+  start_date: '2023-01-01'  # Меньше данных для начала
+  # Топ-5 символов для тестирования антиовефит стратегии
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  test_ratio: 0.2
+  train_ratio: 0.6
+  val_ratio: 0.2
+  train_stride: 2  # Увеличен stride для уменьшения корреляции
+  val_stride: 8    # Еще больше stride для валидации
+  
+database:
+  database: crypto_trading
+  host: localhost
+  port: 5555
+  table: raw_market_data
+  user: ruslan
+  password: ruslan
+
+features:
+  enhanced_features:
+  - price_acceleration
+  - volume_momentum
+  - order_flow_imbalance
+  
+  technical:
+  - name: sma
+    periods: [10, 20, 50]
+  - name: ema
+    periods: [12, 26]
+  - name: rsi
+    period: 14
+  - name: macd
+    fast: 12
+    slow: 26
+    signal: 9
+  - name: bollinger_bands
+    period: 20
+    std_dev: 2
+  - name: atr
+    period: 14
+
+logging:
+  handlers:
+  - console
+  - file
+  level: INFO
+  log_dir: experiments/logs
+  tensorboard:
+    enabled: true
+    log_dir: experiments/tensorboard
+
+loss:
+  name: directional_multitask
+  
+  # Сбалансированные веса с акцентом на FLAT
+  task_weights:
+    future_returns: 0.6      # Уменьшен
+    directions: 1.0          # Основной фокус
+    long_levels: 0.4         # Уменьшен
+    short_levels: 0.4        # Уменьшен
+    risk_metrics: 0.3        # Уменьшен
+  
+  # Умеренные параметры
+  large_move_threshold: 0.005  # 0.5%
+  large_move_weight: 3.0       
+  
+  # Усиленный Focal Loss
+  focal_alpha: 0.25
+  focal_gamma: 3.0            # Увеличен для сложных примеров
+  
+  # Умеренный штраф
+  wrong_direction_penalty: 1.5
+  
+  # Балансировка классов
+  use_dynamic_class_weights: false
+  class_weights: [1.0, 1.0, 1.5]  # Увеличен вес FLAT
+  use_weighted_sampling: true
+  
+  # Защита от схлопывания
+  auto_adjust_on_collapse: true
+  collapse_threshold: 0.7
+  min_entropy: 0.7
+
+model:
+  # УМЕНЬШЕННАЯ архитектура против переобучения
+  activation: gelu
+  batch_norm: true
+  batch_size: 256  # Уменьшен batch size
+  context_window: 96
+  
+  # УМЕНЬШЕННЫЕ размеры модели
+  d_ff: 512  # Было 768
+  d_model: 256  # Было 384
+  
+  # УСИЛЕННАЯ регуляризация
+  dropout: 0.7  # Было 0.5
+  attention_dropout: 0.3  # Было 0.1
+  weight_decay: 0.1  # Было 0.01 (увеличено в 10 раз!)
+  
+  # Меньше слоев
+  e_layers: 1  # Было 2
+  n_heads: 8
+  
+  # Обучение
+  early_stopping_patience: 10  # Было 30
+  epochs: 50  # Меньше эпох
+  gradient_clip: 0.5  # Было 0.1
+  
+  # Увеличенный learning rate
+  learning_rate: 0.00005  # Было 0.00001
+  warmup_steps: 2000  # Было 5000
+  
+  # Настройки
+  input_size: 240
+  min_delta: 0.001
+  name: UnifiedPatchTST
+  output_size: 20
+  overfitting_threshold: 0.1  # Более строгий
+  
+  # Патчи
+  patch_len: 16  # Увеличено
+  stride: 8
+  
+  # GPU оптимизации
+  use_amp: true
+  amp_dtype: float16
+  compile_model: false
+  
+  # Меньше gradient accumulation
+  gradient_accumulation_steps: 2  # Было 4
+  
+  # Расписание learning rate
+  lr_scheduler:
+    type: "CosineAnnealingWarmRestarts"
+    T_0: 5  # Было 10
+    T_mult: 2
+    eta_min: 0.000001
+    
+  # Целевые переменные (20)
+  target_variables:
+    - future_return_15m
+    - future_return_1h
+    - future_return_4h
+    - future_return_12h
+    - direction_15m
+    - direction_1h
+    - direction_4h
+    - direction_12h
+    - long_will_reach_1pct_4h
+    - long_will_reach_2pct_4h
+    - long_will_reach_3pct_12h
+    - long_will_reach_5pct_12h
+    - short_will_reach_1pct_4h
+    - short_will_reach_2pct_4h
+    - short_will_reach_3pct_12h
+    - short_will_reach_5pct_12h
+    - max_drawdown_1h
+    - max_rally_1h
+    - max_drawdown_4h
+    - max_rally_4h
+    
+  task_type: trading
+  target_window: 1
+  pred_len: 1
+  
+  # УСИЛЕННЫЕ техники регуляризации
+  label_smoothing: 0.2  # Было 0.1
+  mixup_alpha: 0.6  # Было 0.4
+  weight_noise: 0.05  # Было 0.02
+  temperature_scaling: true
+  confidence_threshold: 0.8  # Было 0.7
+  direction_confidence_threshold: 0.5  # Было 0.45
+  direction_l2_weight: 0.01  # Было 0.001
+  dropout_schedule: true
+  
+  # Отключаем дополнительные улучшения
+  use_improvements: false
+  feature_attention: false
+  multi_scale_patches: false
+  
+  # EMA для стабильности
+  use_ema: true
+  ema_decay: 0.995  # Было 0.999
+  
+  # Инициализация
+  direction_head_init:
+    method: "balanced"
+    bias_init: "balanced"  # Использовать сбалансированный bias
+    weight_scale: 0.05  # Было 0.1
+
+optimizer:
+  name: AdamW
+  params:
+    betas: [0.9, 0.999]
+    eps: 0.00000001
+    weight_decay: 0.1  # Совпадает с model.weight_decay
+    amsgrad: true
+
+performance:
+  cache_dir: cache/
+  cache_features: true
+  device: cuda
+  mixed_precision: true
+  num_workers: 4
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 2
+  use_precomputed_dataset: true
+
+scheduler:
+  name: ReduceLROnPlateau
+  params:
+    mode: min
+    factor: 0.7  # Было 0.5
+    patience: 3  # Было 5
+    min_lr: 0.000001
+
+# Антиовефит настройки
+production:
+  # Поэтапное обучение с фокусом на обобщение
+  staged_training:
+    enabled: true
+    stages:
+      - name: "balanced_warmup"
+        epochs: 10
+        active_losses: ["directions"]
+        learning_rate: 0.00005
+        dropout: 0.5  # Начинаем с умеренного
+        label_smoothing: 0.1
+        class_weights: [1.0, 1.0, 2.0]  # Сильный акцент на FLAT
+        gradient_clip: 0.5
+        description: "Сбалансированный разогрев"
+      - name: "regularized_training"
+        epochs: 20
+        active_losses: ["directions", "future_returns"]
+        learning_rate: 0.00002
+        dropout: 0.7  # Увеличиваем
+        label_smoothing: 0.2
+        class_weights: [1.0, 1.0, 1.5]
+        description: "Регуляризованное обучение"
+      - name: "full_training"
+        epochs: 20
+        active_losses: ["all"]
+        learning_rate: 0.00001
+        dropout: 0.8  # Максимальный dropout
+        label_smoothing: 0.3
+        description: "Полное обучение с максимальной регуляризацией"
+  
+  # Валидация
+  validation_frequency: 1
+  save_best_only: true
+  save_frequency: 5
+  
+  # Мониторинг
+  track_metrics:
+    - direction_accuracy_per_class
+    - confusion_matrix
+    - overfitting_ratio
+    - val_train_loss_ratio
+  
+  # Ансамблирование
+  ensemble:
+    enabled: true
+    n_models: 3
+    voting: "soft"
+    diversity_bonus: 0.2
+
+risk_management:
+  max_concurrent_positions: 5
+  position_sizing:
+    method: kelly_criterion
+    max_position_pct: 5.0
+    max_risk_per_trade: 0.5
+  stop_loss_pct: 2.0
+  take_profit_targets:
+  - 1.5
+  - 2.5
+  - 4.0
+
+validation:
+  max_drawdown: 0.2
+  min_sharpe_ratio: 1.5
+  min_win_rate: 0.48
+  min_direction_accuracy: 0.40
+  max_overfitting_ratio: 2.0  # Новый критерий!

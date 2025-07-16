@@ -1,0 +1,25 @@
+# Безопасная конфигурация SSH для /etc/ssh/sshd_config
+# Добавьте эти строки в конфигурацию
+
+# Включить аутентификацию по ключам
+PubkeyAuthentication yes
+
+# Отключить аутентификацию по паролю для безопасности
+PasswordAuthentication no
+
+# Отключить пустые пароли
+PermitEmptyPasswords no
+
+# Запретить root логин
+PermitRootLogin no
+
+# Использовать только SSH версии 2
+Protocol 2
+
+# Таймауты для безопасности
+ClientAliveInterval 120
+ClientAliveCountMax 3
+
+# Ограничить попытки входа
+MaxAuthTries 3
+MaxSessions 5

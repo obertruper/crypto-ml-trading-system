@@ -1,0 +1,321 @@
+check_date: '2025-06-06 16:52:05'
+interval_minutes: 15
+recommendations:
+  best_symbols: []
+  min_history_days: 180
+  min_sequences: 1000
+results:
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: 1INCHUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: AAVEUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ADAUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ALGOUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: APEUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: APTUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ARBUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ATOMUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: AVAXUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: AXSUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: BNBUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: BTCUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: CAKEUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: DOGEUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: DOTUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: DYDXUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ENAUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ENSUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ETHUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: GALAUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: GMTUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: HBARUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ICPUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: JTOUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: LDOUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: LINKUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: LTCUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: NEARUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: OMUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ONDOUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: OPUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: PNUTUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: POPCATUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: SOLUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: SUIUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: TIAUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: TONUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: TRUMPUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: TRXUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: TWTUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: UNIUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: WIFUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: XRPUSDT
+  total_candles: 3599
+  years_available: 0.11
+- days_available: 39
+  earliest_date: 2025-04-28 05:30:00
+  sequences_for_ml: 3439
+  sufficient_data: false
+  symbol: ZEREBROUSDT
+  total_candles: 3599
+  years_available: 0.11
+statistics:
+  symbols_1y_plus: 0
+  symbols_2y_plus: 0
+  symbols_3y_plus: 0
+  symbols_sufficient_for_ml: 0
+  total_symbols: 44

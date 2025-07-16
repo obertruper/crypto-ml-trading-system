@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.crypto.lsp</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ruslan/PycharmProjects/LLM TRANSFORM/crypto_ai_trading/lsp_server/venv/bin/python</string>
+        <string>/Users/ruslan/PycharmProjects/LLM TRANSFORM/crypto_ai_trading/lsp_server/start_lsp_service.py</string>
+        <string>start</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/ruslan/PycharmProjects/LLM TRANSFORM/crypto_ai_trading</string>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/ruslan/PycharmProjects/LLM TRANSFORM/crypto_ai_trading/lsp_server/lsp_stdout.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/ruslan/PycharmProjects/LLM TRANSFORM/crypto_ai_trading/lsp_server/lsp_stderr.log</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

@@ -1,0 +1,82 @@
+data_download:
+  days: 3650
+  futures_validated: true
+  interval: '15'
+  market_type: futures
+  max_workers: 10  # Количество потоков для параллельной загрузки
+  symbols:
+  - 1000PEPEUSDT
+  - 1INCHUSDT
+  - AAVEUSDT
+  - ADAUSDT
+  - ALGOUSDT
+  - APEUSDT
+  - APTUSDT
+  - ARBUSDT
+  - ATOMUSDT
+  - AVAXUSDT
+  - AXSUSDT
+  - BNBUSDT
+  - BTCUSDT
+  - CAKEUSDT
+  - DOGEUSDT
+  - DOTUSDT
+  - DYDXUSDT
+  - ENAUSDT
+  - ENSUSDT
+  - ETHUSDT
+  - FARTCOINUSDT
+  - GALAUSDT
+  - GMTUSDT
+  - GRIFFAINUSDT
+  - HBARUSDT
+  - ICPUSDT
+  - JTOUSDT
+  - LDOUSDT
+  - LINKUSDT
+  - LTCUSDT
+  - MELANIAUSDT
+  - NEARUSDT
+  - OMUSDT
+  - ONDOUSDT
+  - OPUSDT
+  - PNUTUSDT
+  - POPCATUSDT
+  - SOLUSDT
+  - SUIUSDT
+  - TAOUSDT
+  - TIAUSDT
+  - TONUSDT
+  - TRBUSDT
+  - TRUMPUSDT
+  - TRXUSDT
+  - TWTUSDT
+  - UNIUSDT
+  - WIFUSDT
+  - XRPUSDT
+  - ZEREBROUSDT
+  validation_date: '2025-06-06 17:42:39'
+database:
+  dbname: crypto_trading
+  host: localhost
+  password: your_secure_password_here
+  port: 5555
+  user: ruslan
+model:
+  batch_size: 32
+  epochs: 100
+  learning_rate: 0.001
+  prediction_horizon: 100
+  sequence_length: 60
+paths:
+  logs: logs/
+  models: trained_model/
+  plots: plots/
+risk_profile:
+  default_balance: 500
+  leverage: 10
+  risk_per_trade: 0.02
+  stop_loss_pct_buy: 0.989
+  stop_loss_pct_sell: 1.011
+  take_profit_pct_buy: 1.058
+  take_profit_pct_sell: 0.942

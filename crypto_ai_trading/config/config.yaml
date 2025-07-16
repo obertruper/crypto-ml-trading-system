@@ -1,0 +1,390 @@
+backtesting:
+  commission: 0.001
+  initial_capital: 100000
+  metrics:
+  - total_return
+  - sharpe_ratio
+  - max_drawdown
+  - win_rate
+  - profit_factor
+  - expectancy
+  - calmar_ratio
+  slippage: 0.0005
+bybit:
+  fees:
+    funding_rate: 0.0001
+    maker: 0.0002
+    taker: 0.00055
+  slippage:
+    base: 0.0005
+    market_impact_threshold: 0.01
+data:
+  end_date: '2025-06-29'
+  interval_minutes: 15
+  start_date: '2020-03-25'
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - AAVEUSDT
+  - ADAUSDT
+  - ALGOUSDT
+  - APEUSDT
+  - APTUSDT
+  - ARBUSDT
+  - ATOMUSDT
+  - AVAXUSDT
+  - AXSUSDT
+  - CAKEUSDT
+  - DOGEUSDT
+  - DOTUSDT
+  - DYDXUSDT
+  - ENAUSDT
+  - ENSUSDT
+  - FARTCOINUSDT
+  - GALAUSDT
+  - GMTUSDT
+  - GRIFFAINUSDT
+  - HBARUSDT
+  - ICPUSDT
+  - JTOUSDT
+  - LDOUSDT
+  - LINKUSDT
+  - LTCUSDT
+  - MELANIAUSDT
+  - NEARUSDT
+  - OMUSDT
+  - ONDOUSDT
+  - OPUSDT
+  - 1000PEPEUSDT
+  - PNUTUSDT
+  - POPCATUSDT
+  - SUIUSDT
+  - TAOUSDT
+  - TIAUSDT
+  - TONUSDT
+  - TRBUSDT
+  - TRUMPUSDT
+  - TRXUSDT
+  - TWTUSDT
+  - UNIUSDT
+  - WIFUSDT
+  - ZEREBROUSDT
+  - 1INCHUSDT
+  test_ratio: 0.2
+  train_ratio: 0.6
+  val_ratio: 0.2
+  train_stride: 2   # УМЕНЬШЕН для меньшего переобучения
+  val_stride: 2     # ОДИНАКОВЫЙ с train для согласованности распределений
+  max_symbols: 10   # ВРЕМЕННО: для быстрого теста исправлений
+  walk_forward:
+    step_size: 7
+    test_window: 30
+    training_window: 180
+    validation_window: 30
+database:
+  database: crypto_trading
+  host: localhost
+  max_overflow: 20
+  password: ruslan
+  pool_size: 10
+  port: 5555
+  table: raw_market_data
+  user: ruslan
+  # Альтернативное подключение через Unix socket (если TCP не работает)
+  # unix_socket: /var/run/postgresql
+ensemble:
+  enabled: true
+  models_count: 5
+  rebalance_frequency: weekly
+  voting_method: weighted_average
+  weight_metric: sharpe_ratio
+features:
+  cross_asset:
+  - btc_dominance_effect
+  - sector_correlation
+  - lead_lag_signals
+  microstructure:
+  - bid_ask_spread
+  - order_book_imbalance
+  - volume_weighted_price
+  - trade_flow_toxicity
+  technical:
+  - name: sma
+    periods:
+    - 10
+    - 20
+    - 50
+  - name: ema
+    periods:
+    - 12
+    - 26
+  - name: rsi
+    period: 14
+  - fast: 12
+    name: macd
+    signal: 9
+    slow: 26
+  - name: bollinger_bands
+    period: 20
+    std_dev: 2
+  - name: atr
+    period: 14
+  - bins: 20
+    name: volume_profile
+  temporal:
+  - hour_of_day
+  - day_of_week
+  - month_of_year
+  - is_weekend
+logging:
+  handlers:
+  - console
+  - file
+  level: INFO
+  log_dir: experiments/logs
+  tensorboard:
+    enabled: true
+    log_dir: experiments/tensorboard
+  wandb:
+    enabled: false
+    entity: your-entity
+    project: crypto-ai-trading
+loss:
+  name: directional_multitask  # Новая гибридная loss функция для улучшения direction prediction
+  params:
+    reduction: mean
+  
+  # Веса для разных типов задач в multi-task learning
+  task_weights:
+    future_returns: 0.7      # Уменьшен для баланса
+    directions: 1.0          # Основной фокус на направлениях
+    long_levels: 0.5         # Уменьшен
+    short_levels: 0.5        # Уменьшен
+    risk_metrics: 0.4        # Для drawdown/rally
+  
+  # КРИТИЧНО для борьбы со схлопыванием в FLAT
+  class_weights: [1.3, 1.3, 0.7]  # [LONG, SHORT, FLAT] - сбалансированные веса
+  use_weighted_sampling: false  # ОТКЛЮЧЕНО - убираем дублирование примеров
+  # Динамическая балансировка на основе энтропии батча
+  adaptive_class_weights: true
+  entropy_min_weight: 0.2  # Минимальный вес для доминирующего класса
+  
+  # Параметры для предотвращения схлопывания
+  auto_adjust_on_collapse: true
+  collapse_threshold: 0.75
+  min_entropy: 0.6
+  
+  # Параметры для direction focus (влияют на все типы потерь)
+  large_move_threshold: 0.005  # 0.5% - минимальный порог движения для взвешивания
+  large_move_weight: 5.0       # Увеличенный вес для крупных движений
+  
+  # Параметры Focal Loss для несбалансированных классов direction
+  focal_alpha: 0.25           # Параметр α для Focal Loss
+  focal_gamma: 2.0            # Параметр γ для Focal Loss
+  
+  # Штрафы для противоположных направлений
+  wrong_direction_penalty: 2.0 # Дополнительный штраф за UP vs DOWN ошибки
+  
+  # Динамические веса классов для адаптации к изменениям распределения
+  use_dynamic_class_weights: true  # Адаптивные веса на основе скользящего среднего батчей
+model:
+  activation: gelu
+  batch_norm: true
+  batch_size: 512  # Уменьшен для лучшей генерализации
+  context_window: 96  # 24 часа истории (96 * 15 минут) - используем существующий кэш
+  d_ff: 512  # УМЕНЬШЕН для предотвращения переобучения
+  d_model: 256  # УМЕНЬШЕН для предотвращения переобучения
+  dropout: 0.3  # ОПТИМАЛЬНЫЙ для нормального обучения
+  attention_dropout: 0.1  # СТАНДАРТНЫЙ для attention слоев
+  weight_decay: 0.01  # СТАНДАРТНАЯ L2 регуляризация
+  e_layers: 3  # Оптимальное количество слоев
+  early_stopping_patience: 10  # УМЕНЬШЕНА терпимость для строгого контроля переобучения
+  epochs: 100  # Максимум эпох для полного обучения
+  gradient_clip: 1.0  # УВЕЛИЧЕН для предотвращения взрывающихся градиентов
+  individual: false
+  input_size: 240  # Обновлено согласно фактическому количеству признаков в данных
+  learning_rate: 0.00005  # УМЕНЬШЕН LR для более стабильного обучения
+  min_delta: 0.0001  # МЕНЕЕ чувствительный порог
+  n_heads: 8  # Увеличено для лучшей параллелизации на GPU
+  name: UnifiedPatchTST  # ИЗМЕНЕНО на унифицированную модель
+  output_size: 20  # Фактическое количество целевых переменных в кэше
+  overfitting_threshold: 0.3  # СМЯГЧЕН - даем модели больше свободы в начале
+  patch_len: 16  # Увеличен размер патча
+  use_amp: true      # Mixed Precision для RTX 5090
+  amp_dtype: float16  # FP16 для совместимости с sm_120
+  compile_model: false  # RTX 5090 (sm_120) пока не поддерживается torch.compile 
+  use_tf32: true  # TensorFloat-32 для ускорения
+  
+  # Расписание learning rate
+  lr_scheduler:
+    type: "cosine"
+    min_lr: 1e-7
+    warmup_epochs: 5
+  # Целевые переменные для торговой модели v4.0 (24 переменные)
+  target_variables:
+    # A. Базовые возвраты (4)
+    - future_return_15m    # через 15 минут
+    - future_return_1h     # через 1 час
+    - future_return_4h     # через 4 часа
+    - future_return_12h    # через 12 часов
+    # B. Направление движения (4)
+    - direction_15m        # UP/DOWN/FLAT
+    - direction_1h
+    - direction_4h
+    - direction_12h
+    # C. Достижение уровней прибыли LONG (4)
+    - long_will_reach_1pct_4h
+    - long_will_reach_2pct_4h
+    - long_will_reach_3pct_12h
+    - long_will_reach_5pct_12h
+    # D. Достижение уровней прибыли SHORT (4)
+    - short_will_reach_1pct_4h
+    - short_will_reach_2pct_4h
+    - short_will_reach_3pct_12h
+    - short_will_reach_5pct_12h
+    # E. Риск-метрики (4)
+    - max_drawdown_1h
+    - max_rally_1h
+    - max_drawdown_4h
+    - max_rally_4h
+    # F. Торговые сигналы (4)
+    - best_action          # LONG/SHORT/HOLD
+    - signal_strength      # Сила сигнала [0-1]
+    - risk_reward_ratio    # Соотношение риск/прибыль
+    - optimal_hold_time    # Оптимальное время удержания
+  task_type: trading  # Специальный режим для торговли
+  target_window: 1  # Предсказываем одно значение
+  pred_len: 1  # Предсказываем одно значение
+  stride: 8  # Увеличен шаг для меньшего перекрытия
+  warmup_steps: 500  # Больше warmup шагов
+  # Дополнительные параметры против переобучения
+  label_smoothing: 0.05  # Уменьшен для более четкой классификации
+  mixup_alpha: 0.0      # ОТКЛЮЧЕН Mixup для многозадачного обучения
+  weight_noise: 0.0     # ОТКЛЮЧЕНО
+  temperature_scaling: true  # Калибровка уверенности через температуру
+  temperature: 2.0  # Увеличенная температура для снижения уверенности в FLAT
+  confidence_threshold: 0.25  # НИЗКИЙ порог для свободного предсказания
+  dropout_schedule: false    # ОТКЛЮЧЕНО динамическое уменьшение dropout
+  
+  # Entropy regularization для предотвращения схлопывания
+  entropy_weight: 0.1  # Добавляем штраф за низкую энтропию
+  min_entropy_threshold: 0.5  # Минимальная энтропия предсказаний
+  # L2 регуляризация для предотвращения переобучения
+  l2_regularization: 0.001  # Коэффициент L2 регуляризации
+  # Параметры для улучшенной версии PatchTST
+  use_improvements: false  # Временно отключено до исправления размерностей
+  feature_attention: true  # Использовать FeatureAttention
+  multi_scale_patches: true  # Использовать многомасштабные патчи
+optimizer:
+  name: AdamW
+  params:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-08
+    weight_decay: 0.001
+    amsgrad: true
+performance:
+  cache_dir: cache/
+  cache_features: true
+  data_parallel: true
+  device: cuda  # RTX 5090 с 31.4 GB памяти
+  mixed_precision: true  # Включено для RTX 5090
+  num_workers: 8  # УВЕЛИЧЕНО для более быстрого создания кэша
+  persistent_workers: true  # Переиспользование воркеров для эффективности
+  pin_memory: true
+  prefetch_factor: 8  # УВЕЛИЧЕНО для более быстрого создания кэша
+  gradient_accumulation_steps: 2  # Эффективный batch_size = 16384
+  gpu_cache_clear_freq: 20  # Реже очищать кэш GPU для производительности
+  monitor_gpu_memory: true  # Мониторинг использования GPU памяти
+  dataloader_pin_memory: true  # Явно включить pin_memory для DataLoader
+  dataloader_drop_last: true  # Отбрасывать неполные батчи для стабильности
+  use_precomputed_dataset: true  # Использовать предвычисленные данные для скорости
+remote_server:
+  direct_connection:
+    host: ssh1.vast.ai
+    key_path: ~/.ssh/id_rsa
+    port: 30421
+    user: root
+  enabled: true
+  ports:
+    jupyter: 8888
+    tensorboard: 6006
+    web_ui: 8080
+  python_path: /opt/conda/bin/python
+  remote_path: /root/crypto_ai_trading
+  ssh_alias: vast-current
+  sync:
+    exclude:
+    - cache/
+    - '*.pyc'
+    - __pycache__/
+    - .git/
+    - logs/
+    - models_saved/
+    - experiments/runs/
+    - .DS_Store
+risk_management:
+  max_concurrent_positions: 10
+  max_positions_per_symbol: 1
+  partial_close_sizes:
+  - 40
+  - 40
+  - 20
+  position_sizing:
+    correlation_adjustment: true
+    max_position_pct: 10.0
+    max_risk_per_trade: 0.5
+    method: kelly_criterion
+  risk_reward_ratio: 3.0
+  stop_loss_pct: 2.0
+  take_profit_targets:
+  - 1.5
+  - 2.5
+  - 4.0
+  volatility_adjustment:
+    altcoin_risk_multiplier: 0.7
+    high_vol_multipliers:
+    - 1.8
+    - 3.0
+    - 5.0
+    high_vol_threshold: 3.0
+    low_vol_multipliers:
+    - 1.2
+    - 2.0
+    - 3.0
+    low_vol_threshold: 1.5
+    major_coins:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    major_risk_multiplier: 1.0
+    meme_coin_risk_multiplier: 0.5
+scheduler:
+  name: OneCycleLR  # ИЗМЕНЕНО для динамического LR
+  params:
+    max_lr: 0.0003     # УМЕНЬШЕН максимальный LR для стабильности
+    pct_start: 0.3   # 30% времени на разгон
+    anneal_strategy: cos  # Косинусное затухание
+    cycle_momentum: true
+    base_momentum: 0.85
+    max_momentum: 0.95
+    div_factor: 25      # Начальный LR = max_lr / 25 = 0.000012
+    final_div_factor: 10000  # Финальный LR = max_lr / 10000 = 0.00000003
+trading:
+  max_daily_trades: 15
+  max_positions: 5
+  min_confidence_threshold: 0.65
+  multiframe_confirmation: true
+  rebalance_interval: 1h
+validation:
+  max_drawdown: 0.2
+  min_sharpe_ratio: 1.5
+  min_win_rate: 0.25
+  statistical_tests:
+  - sharpe_ratio_test
+  - information_ratio
+  - monte_carlo_permutation

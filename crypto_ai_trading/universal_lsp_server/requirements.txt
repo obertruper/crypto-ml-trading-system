@@ -1,0 +1,31 @@
+# Core LSP dependencies
+pygls>=1.2.0
+lsprotocol>=2023.0.0
+
+# Async and file operations
+aiofiles>=23.0.0
+watchdog>=3.0.0
+
+# Type checking and extensions
+typing-extensions>=4.5.0
+
+# Code analysis (optional, but recommended)
+jedi>=0.19.0
+rope>=1.9.0
+
+# Documentation parsing
+docstring-parser>=0.15
+
+# Configuration
+pyyaml>=6.0
+jsonschema>=4.17.0
+
+# Utilities
+click>=8.0.0  # for CLI
+python-dotenv>=1.0.0  # for environment variables
+
+# Token counting (optional)
+tiktoken>=0.5.0
+
+# Logging
+colorlog>=6.7.0

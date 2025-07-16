@@ -1,0 +1,56 @@
+{
+  "name": "crypto_ai_trading",
+  "description": "ML Crypto Trading System с архитектурой PatchTST",
+  "servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading"],
+      "description": "Файловая система проекта"
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_PERSISTENCE_PATH": "/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading/.mcp_memory"
+      },
+      "description": "Персистентная память для проекта"
+    }
+  },
+  "contexts": {
+    "project": {
+      "description": "Полный контекст проекта crypto_ai_trading",
+      "includes": [
+        "config/*.yaml",
+        "data/*.py",
+        "models/*.py",
+        "trading/*.py",
+        "training/*.py",
+        "utils/*.py",
+        "main.py",
+        "requirements.txt"
+      ],
+      "excludes": [
+        "**/__pycache__/**",
+        "**/*.pyc",
+        "logs/**",
+        "models_saved/**",
+        ".git/**"
+      ]
+    },
+    "database": {
+      "description": "Контекст работы с PostgreSQL базой данных",
+      "includes": [
+        "data/data_loader.py",
+        "data/database.py",
+        "utils/db_utils.py"
+      ]
+    },
+    "model": {
+      "description": "Контекст ML моделей и архитектуры",
+      "includes": [
+        "models/**/*.py",
+        "training/**/*.py"
+      ]
+    }
+  }
+}

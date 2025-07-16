@@ -1,0 +1,71 @@
+# ML Crypto Trading Project Rules
+
+## Обзор проекта
+Это ML проект для криптотрейдинга с использованием Temporal Fusion Transformer для предсказания доходности на фьючерсном рынке Bybit.
+
+## Технологический стек
+- Python 3.11+
+- TensorFlow 2.x для ML моделей
+- PostgreSQL (порт 5555) для хранения данных
+- Pandas, NumPy для обработки данных
+- TA-Lib для технических индикаторов
+- PyBybit для загрузки рыночных данных
+
+## Архитектура
+1. **Загрузка данных**: `download_data.py` - фьючерсные данные с Bybit
+2. **Подготовка**: `prepare_dataset.py` - 49 технических индикаторов
+3. **Обучение**: `train_universal_transformer.py` - ГЛАВНЫЙ файл с TFT моделью
+4. **БД**: PostgreSQL с таблицами raw_market_data, processed_market_data
+
+## Правила разработки
+- ВСЕГДА использовать русский язык в комментариях и документации
+- НЕ создавать новые файлы без явной просьбы
+- Все улучшения модели вносить ТОЛЬКО в train_universal_transformer.py
+- Исключать тестовые символы (TESTUSDT и т.д.)
+- Использовать 15-минутный таймфрейм
+- Фокус на ФЬЮЧЕРСНОМ рынке (market_type='futures')
+
+## Риск-профиль торговли
+- Stop Loss: ±1.1%
+- Take Profit: ±5.8%
+- Анализ 100 свечей вперед (25 часов)
+- Частичные закрытия: 20% на +1.2%, 30% на +2.4%, 30% на +3.5%
+
+## Структура логов
+logs/training_YYYYMMDD_HHMMSS/
+├── training.log              # Полный лог
+├── model_name_metrics.csv    # Метрики по эпохам
+├── plots/                    # Визуализация прогресса
+└── tensorboard/             # TensorBoard данные
+
+## База данных
+- Хост: localhost
+- Порт: 5555
+- База: crypto_trading
+- Пользователь: ruslan
+
+## Важные команды
+# Полный пайплайн
+python run_futures_pipeline.py
+
+# Обучение регрессионной модели
+python train_universal_transformer.py --task regression
+
+# Мониторинг обучения
+python monitor_training.py
+
+## Технические индикаторы (49 штук)
+- Трендовые: EMA, ADX, MACD, Ichimoku, SAR, Aroon
+- Осцилляторы: RSI, Stochastic, CCI, Williams %R
+- Волатильность: ATR, Bollinger Bands, Donchian
+- Объемные: OBV, CMF, MFI
+- Временные признаки и производные
+
+## Модели
+- Регрессия: buy_return_predictor, sell_return_predictor
+- Классификация: buy_profit, buy_loss, sell_profit, sell_loss
+
+## Визуализация
+- Автоматические графики обновляются каждые 5 эпох
+- TensorBoard доступен для детального анализа
+- Финальные отчеты в logs/training_*/final_report.txt

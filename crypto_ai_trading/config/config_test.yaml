@@ -1,0 +1,240 @@
+# Тестовая конфигурация для быстрого обучения (5 монет, 10 эпох)
+# Основано на основной конфигурации с минимальными изменениями
+
+backtesting:
+  commission: 0.001
+  initial_capital: 100000
+  metrics:
+  - total_return
+  - sharpe_ratio
+  - max_drawdown
+  - win_rate
+  - profit_factor
+  - expectancy
+  - calmar_ratio
+  slippage: 0.0005
+
+bybit:
+  fees:
+    funding_rate: 0.0001
+    maker: 0.0002
+    taker: 0.00055
+  slippage:
+    base: 0.0005
+    market_impact_threshold: 0.01
+
+data:
+  end_date: '2025-06-16'
+  interval_minutes: 15
+  start_date: '2024-01-01'  # Меньший период для теста
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  test_ratio: 0.2
+  train_ratio: 0.6
+  val_ratio: 0.2
+  walk_forward:
+    step_size: 7
+    test_window: 30
+    training_window: 180
+    validation_window: 30
+
+database:
+  database: crypto_trading
+  host: localhost
+  max_overflow: 20
+  password: ruslan
+  pool_size: 10
+  port: 5555
+  table: raw_market_data
+  user: ruslan
+
+ensemble:
+  enabled: false  # Отключаем для теста
+  models_count: 5
+  rebalance_frequency: weekly
+  voting_method: weighted_average
+  weight_metric: sharpe_ratio
+
+features:
+  cross_asset:
+  - btc_dominance_effect
+  - sector_correlation
+  - lead_lag_signals
+  microstructure:
+  - bid_ask_spread
+  - order_book_imbalance
+  - volume_weighted_price
+  - trade_flow_toxicity
+  technical:
+  - name: sma
+    periods:
+    - 10
+    - 20
+    - 50
+  - name: ema
+    periods:
+    - 12
+    - 26
+  - name: rsi
+    period: 14
+  - fast: 12
+    name: macd
+    signal: 9
+    slow: 26
+  - name: bollinger_bands
+    period: 20
+    std_dev: 2
+  - name: atr
+    period: 14
+  - bins: 20
+    name: volume_profile
+  temporal:
+  - hour_of_day
+  - day_of_week
+  - month_of_year
+  - is_weekend
+
+logging:
+  handlers:
+  - console
+  - file
+  level: INFO
+  log_dir: experiments/logs
+  tensorboard:
+    enabled: true
+    log_dir: experiments/tensorboard
+  wandb:
+    enabled: false
+    entity: your-entity
+    project: crypto-ai-trading
+
+loss:
+  name: mse
+  params:
+    reduction: mean
+
+model:
+  activation: gelu
+  batch_norm: true
+  batch_size: 64  # Уменьшен для быстрого теста
+  context_window: 48  # Уменьшен для теста
+  d_ff: 256  # Уменьшен размер
+  d_model: 128  # Уменьшен для теста
+  dropout: 0.2
+  e_layers: 2  # Меньше слоев для теста
+  early_stopping_patience: 5  # Быстрая остановка для теста
+  epochs: 10  # Только 10 эпох для теста
+  gradient_clip: 0.5
+  individual: false
+  input_size: 100
+  learning_rate: 0.0001  # Больше LR для быстрого обучения
+  min_delta: 0.001  # Больший порог для теста
+  n_heads: 4
+  name: PatchTST
+  output_size: 1
+  overfitting_threshold: 0.3  # Менее строгий для теста
+  patch_len: 8  # Меньший размер патча
+  target_variable: future_return_4
+  task_type: regression
+  target_window: 1
+  pred_len: 1
+  stride: 4  # Меньший шаг
+  warmup_steps: 100  # Меньше warmup для теста
+  # Дополнительные параметры против переобучения
+  label_smoothing: 0.1
+  mixup_alpha: 0.2
+  weight_noise: 0.01
+  # Параметры для улучшенной версии PatchTST
+  use_improvements: false
+  feature_attention: true
+  multi_scale_patches: false  # Отключено для теста
+
+optimizer:
+  name: AdamW
+  params:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-08
+    weight_decay: 0.001
+    amsgrad: true
+
+performance:
+  cache_dir: cache/
+  cache_features: true
+  data_parallel: false  # Отключено для теста
+  device: cpu  # CPU режим для теста без GPU
+  mixed_precision: false
+  num_workers: 0  # Для Windows WSL
+  persistent_workers: false
+  pin_memory: false  # Для CPU
+  prefetch_factor: 1
+
+remote_server:
+  enabled: false  # Отключено для локального теста
+
+risk_management:
+  max_concurrent_positions: 10
+  max_positions_per_symbol: 1
+  partial_close_sizes:
+  - 40
+  - 40
+  - 20
+  position_sizing:
+    correlation_adjustment: true
+    max_position_pct: 10.0
+    max_risk_per_trade: 0.5
+    method: kelly_criterion
+  risk_reward_ratio: 3.0
+  stop_loss_pct: 2.0
+  take_profit_targets:
+  - 1.5
+  - 2.5
+  - 4.0
+  volatility_adjustment:
+    altcoin_risk_multiplier: 0.7
+    high_vol_multipliers:
+    - 1.8
+    - 3.0
+    - 5.0
+    high_vol_threshold: 3.0
+    low_vol_multipliers:
+    - 1.2
+    - 2.0
+    - 3.0
+    low_vol_threshold: 1.5
+    major_coins:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    major_risk_multiplier: 1.0
+    meme_coin_risk_multiplier: 0.5
+
+scheduler:
+  name: ReduceLROnPlateau
+  params:
+    factor: 0.5
+    min_lr: 1.0e-06
+    mode: min
+    patience: 3  # Меньше для теста
+    threshold: 0.0001
+
+trading:
+  max_daily_trades: 15
+  max_positions: 5
+  min_confidence_threshold: 0.65
+  multiframe_confirmation: true
+  rebalance_interval: 1h
+
+validation:
+  max_drawdown: 0.2
+  min_sharpe_ratio: 1.5
+  min_win_rate: 0.25
+  statistical_tests:
+  - sharpe_ratio_test
+  - information_ratio
+  - monte_carlo_permutation

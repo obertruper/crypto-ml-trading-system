@@ -1,0 +1,88 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM"],
+      "env": {}
+    },
+    "postgresql": {
+      "command": "npx",
+      "args": [
+        "-y", 
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://ruslan:ruslan@localhost:5555/crypto_trading"
+      ],
+      "env": {
+        "PGCONNECT_TIMEOUT": "30",
+        "PGSTATEMENT_TIMEOUT": "300000"
+      }
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      }
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {}
+    },
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"],
+      "env": {}
+    }
+  },
+  "context": {
+    "project": "ML Crypto Trading",
+    "description": "Machine Learning система для прогнозирования движения криптовалют на фьючерсном рынке",
+    "mainProject": "/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading",
+    "technologies": [
+      "Python 3.12",
+      "PyTorch 2.1",
+      "PostgreSQL",
+      "Bybit API",
+      "Technical Analysis (ta library)"
+    ],
+    "models": [
+      "PatchTST (Patch Time Series Transformer)",
+      "Temporal Fusion Transformer (TFT)",
+      "LSTM with Attention"
+    ],
+    "dataflow": {
+      "source": "Bybit Futures API",
+      "storage": "PostgreSQL (port 5555)",
+      "preprocessing": "100+ technical indicators",
+      "targets": "Price prediction + TP/SL probabilities"
+    },
+    "integrations": {
+      "lsp": {
+        "enabled": true,
+        "path": "crypto_ai_trading/lsp_server",
+        "autoStart": true
+      },
+      "context7": {
+        "enabled": true,
+        "autoUse": true
+      },
+      "sequentialThinking": {
+        "enabled": true,
+        "depth": 5
+      }
+    },
+    "workflowAutomation": {
+      "beforeAnyOperation": [
+        "Get LSP context",
+        "Load Context7 docs",
+        "Run Sequential Thinking"
+      ],
+      "criticalFiles": [
+        "models/patchtst.py",
+        "config/config.yaml",
+        "trading/risk_management.py"
+      ]
+    }
+  }
+}

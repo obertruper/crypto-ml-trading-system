@@ -1,0 +1,51 @@
+database:
+  database: crypto_trading
+  host: localhost
+  password: ''
+  port: 5555
+  user: ruslan
+model:
+  colsample_bytree: 0.8
+  early_stopping_rounds: 50
+  eval_metric: logloss
+  gamma: 0
+  learning_rate: 0.01
+  max_depth: 6
+  min_child_weight: 1
+  n_estimators: 1000
+  objective: binary:logistic
+  predictor: auto
+  reg_alpha: 0
+  reg_lambda: 1
+  scale_pos_weight: null
+  subsample: 0.8
+  tree_method: auto
+training:
+  balance_method: smote
+  classification_threshold: 1.5
+  ensemble_method: weighted
+  ensemble_size: 3
+  exclude_symbols:
+  - TESTUSDT
+  - TESTBTC
+  log_dir: logs
+  multiclass_thresholds:
+  - 0.0
+  - 0.5
+  - 1.0
+  - 2.0
+  optimize_threshold: true
+  optuna_cv_folds: 3
+  optuna_trials: 50
+  save_models: true
+  save_plots: true
+  smote_k_neighbors: 5
+  task_type: classification_binary
+  test_mode: true
+  test_symbols:
+  - BTCUSDT
+  - ETHUSDT
+  threshold_metric: gmean
+  use_cache: true
+  validation_split: 0.2
+  verbose: 1

@@ -1,0 +1,89 @@
+analysis_results:
+  1000PEPEUSDT:
+    analysis:
+    - 'Возможные альтернативы: PEPEUSDT'
+    - Торгуется на linear фьючерсах
+    - Префикс '1000' обычно используется для фьючерсов мелких монет
+    futures_type: linear
+    has_futures: true
+    similar_spot:
+    - PEPEUSDT
+  FARTCOINUSDT:
+    analysis:
+    - 'Возможные альтернативы: ARUSDT, FARUSDT, FUSDT, AUSDT'
+    - Торгуется на linear фьючерсах
+    - Вероятно, слишком новый токен или мем-коин
+    futures_type: linear
+    has_futures: true
+    similar_spot:
+    - ARUSDT
+    - FARUSDT
+    - FUSDT
+    - AUSDT
+  GRIFFAINUSDT:
+    analysis:
+    - 'Возможные альтернативы: GUSDT, FUSDT, AUSDT'
+    - Торгуется на linear фьючерсах
+    - Вероятно, слишком новый токен или мем-коин
+    futures_type: linear
+    has_futures: true
+    similar_spot:
+    - GUSDT
+    - FUSDT
+    - AUSDT
+  MELANIAUSDT:
+    analysis:
+    - 'Возможные альтернативы: MEUSDT, AUSDT, LAUSDT'
+    - Торгуется на linear фьючерсах
+    - Вероятно, слишком новый токен или мем-коин
+    futures_type: linear
+    has_futures: true
+    similar_spot:
+    - MEUSDT
+    - AUSDT
+    - LAUSDT
+  TAOUSDT:
+    analysis:
+    - 'Возможные альтернативы: AOUSDT, AUSDT'
+    - Торгуется на linear фьючерсах
+    - TAO может торговаться под другим тикером
+    futures_type: linear
+    has_futures: true
+    similar_spot:
+    - AOUSDT
+    - AUSDT
+  TESTUSDT:
+    analysis:
+    - 'Возможные альтернативы: SUSDT'
+    - Похоже на тестовый символ
+    futures_type: null
+    has_futures: false
+    similar_spot:
+    - SUSDT
+  TRBUSDT:
+    analysis:
+    - 'Возможные альтернативы: USDTBUSDT'
+    - Торгуется на linear фьючерсах
+    - Tellor (TRB) должен быть доступен
+    futures_type: linear
+    has_futures: true
+    similar_spot:
+    - USDTBUSDT
+check_date: '2025-06-06 16:58:47'
+no_alternatives: []
+recommended_replacements:
+  1000PEPEUSDT: PEPEUSDT
+  FARTCOINUSDT: ARUSDT
+  GRIFFAINUSDT: GUSDT
+  MELANIAUSDT: MEUSDT
+  TAOUSDT: AOUSDT
+  TESTUSDT: SUSDT
+  TRBUSDT: USDTBUSDT
+unsupported_symbols:
+- 1000PEPEUSDT
+- FARTCOINUSDT
+- GRIFFAINUSDT
+- MELANIAUSDT
+- TAOUSDT
+- TESTUSDT
+- TRBUSDT

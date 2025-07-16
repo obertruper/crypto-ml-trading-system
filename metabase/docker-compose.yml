@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase_crypto
+    ports:
+      - "3000:3000"
+    environment:
+      # Настройки Metabase
+      MB_JETTY_PORT: 3000
+      JAVA_OPTS: "-Xmx1g"
+    volumes:
+      - ./metabase-data:/metabase.db
+    restart: unless-stopped
+    networks:
+      - crypto-network
+
+networks:
+  crypto-network:
+    driver: bridge

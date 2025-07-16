@@ -1,0 +1,145 @@
+{
+  "comment": "Дополнительные MCP серверы для Claude Desktop - добавьте в секцию mcpServers",
+  
+  "web_search_servers": {
+    "duckduckgo-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-duckduckgo"
+      ],
+      "env": {}
+    },
+    
+    "exa-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-exa"
+      ],
+      "env": {
+        "EXA_API_KEY": "YOUR_EXA_API_KEY"
+      }
+    },
+    
+    "tavily-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-tavily"
+      ],
+      "env": {
+        "TAVILY_API_KEY": "YOUR_TAVILY_API_KEY"
+      }
+    }
+  },
+  
+  "media_servers": {
+    "screenshot-basic": {
+      "command": "npx", 
+      "args": [
+        "-y",
+        "mcp-server-screenshot"
+      ]
+    },
+    
+    "piapi-generation": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-piapi"
+      ],
+      "env": {
+        "PIAPI_API_KEY": "YOUR_PIAPI_KEY"
+      }
+    },
+    
+    "computer-vision": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-computer-vision"
+      ],
+      "env": {
+        "CV_API_KEY": "YOUR_CV_API_KEY"
+      }
+    }
+  },
+  
+  "web_scraping_servers": {
+    "firecrawl": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-firecrawl"
+      ],
+      "env": {
+        "FIRECRAWL_API_KEY": "YOUR_FIRECRAWL_KEY"
+      }
+    },
+    
+    "webscraping-ai": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-webscraping-ai"
+      ],
+      "env": {
+        "WEBSCRAPING_AI_KEY": "YOUR_WEBSCRAPING_KEY"
+      }
+    }
+  },
+  
+  "browser_automation": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-playwright"
+      ]
+    },
+    
+    "selenium": {
+      "command": "npx",
+      "args": [
+        "-y", 
+        "mcp-server-selenium"
+      ]
+    }
+  },
+  
+  "other_useful_servers": {
+    "youtube": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-server-youtube"
+      ],
+      "env": {
+        "YOUTUBE_API_KEY": "YOUR_YOUTUBE_API_KEY"
+      }
+    },
+    
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_TOKEN"
+      }
+    },
+    
+    "slack": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-slack"
+      ],
+      "env": {
+        "SLACK_BOT_TOKEN": "YOUR_SLACK_BOT_TOKEN"
+      }
+    }
+  }
+}

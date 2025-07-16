@@ -1,0 +1,190 @@
+# Пример конфигурации Universal LSP Server
+# Скопируйте этот файл как lsp-server.yaml и настройте под свои нужды
+
+server:
+  # Сетевые настройки
+  host: "127.0.0.1"  # Используйте 0.0.0.0 для доступа извне
+  port: 2087
+  
+  # Логирование
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: null     # null для вывода в консоль
+  
+  # Режим работы
+  enable_stdio: false  # true для работы через stdio (для IDE)
+
+indexing:
+  # Расширения файлов для индексации
+  extensions:
+    - ".py"
+    - ".pyi"
+    - ".pyx"
+  
+  # Исключенные директории
+  exclude_dirs:
+    - "__pycache__"
+    - ".git"
+    - ".venv"
+    - "venv"
+    - "node_modules"
+    - ".tox"
+    - "build"
+    - "dist"
+    - "*.egg-info"
+    - ".pytest_cache"
+    - ".mypy_cache"
+  
+  # Паттерны исключения
+  exclude_patterns:
+    - "*.pyc"
+    - "*.pyo"
+    - "*~"
+    - ".DS_Store"
+    - "*.swp"
+  
+  # Ограничения
+  max_file_size: 1048576  # 1MB
+  
+  # Производительность
+  parallel_indexing: true
+  max_workers: 4
+  
+  # Дополнительные опции
+  follow_symlinks: false
+  index_hidden_files: false
+
+context:
+  # Размер контекстного окна (в токенах)
+  max_tokens: 100000
+  
+  # Количество связанных файлов
+  max_related_files: 10
+  
+  # История изменений
+  max_recent_edits: 20
+  
+  # Включать документацию в контекст
+  include_documentation: true
+  
+  # Глубина анализа импортов
+  import_depth: 3
+  
+  # Формат экспорта контекста
+  context_format: "markdown"  # markdown, json, xml
+  
+  # Дополнительная информация
+  include_file_tree: true
+  include_git_info: true
+
+features:
+  # Основные LSP возможности
+  completion: true      # Автодополнение
+  hover: true          # Информация при наведении
+  definition: true     # Переход к определению
+  references: true     # Поиск использований
+  symbols: true        # Символы в документе/проекте
+  diagnostics: true    # Диагностика кода
+  formatting: true     # Форматирование
+  code_actions: true   # Быстрые действия
+  
+  # Дополнительные возможности
+  semantic_tokens: false  # Семантическая подсветка
+  folding_range: true    # Сворачивание блоков
+  selection_range: true  # Умное выделение
+
+cache:
+  # Включить кеширование
+  enabled: true
+  
+  # Директория для кеша
+  directory: ".lsp_cache"
+  
+  # Время жизни кеша (секунды)
+  ttl: 3600  # 1 час
+  
+  # Максимальный размер кеша (MB)
+  max_size: 100
+  
+  # Сжатие кеша
+  compression: true
+
+# Настройки для конкретных языков/фреймворков
+language_specific:
+  python:
+    # Анализаторы кода
+    linters:
+      - "pylint"
+      - "flake8"
+      - "mypy"
+    
+    # Форматировщик
+    formatter: "black"
+    
+    # Дополнительные пути для анализа
+    extra_paths: []
+    
+    # Виртуальное окружение
+    venv_path: null  # Автоопределение
+
+# Экспериментальные функции
+experimental:
+  # Семантическая подсветка синтаксиса
+  semantic_highlighting: true
+  
+  # AI-powered предложения
+  ai_suggestions: true
+  
+  # Умный импорт модулей
+  smart_imports: true
+  
+  # Автоматические type hints
+  auto_type_hints: true
+  
+  # Анализ зависимостей
+  dependency_graph: true
+
+# Настройки производительности
+performance:
+  # Задержка перед обработкой изменений (мс)
+  debounce_interval: 500
+  
+  # Максимум одновременных операций
+  max_concurrent_operations: 10
+  
+  # Инкрементальная синхронизация
+  incremental_sync: true
+  
+  # Профилирование
+  enable_profiling: false
+  profile_output: "lsp_profile.json"
+
+# Интеграция с внешними инструментами
+integrations:
+  # Git интеграция
+  git:
+    enabled: true
+    show_blame: true
+    show_diff: true
+  
+  # Интеграция с системами документации
+  documentation:
+    enabled: true
+    sources:
+      - "docstrings"
+      - "markdown"
+      - "sphinx"
+  
+  # Интеграция с тестами
+  testing:
+    enabled: true
+    frameworks:
+      - "pytest"
+      - "unittest"
+    show_coverage: true
+
+# Кастомные настройки проекта
+# Здесь можно добавить любые специфичные для проекта параметры
+custom_settings:
+  # project_type: "web"
+  # framework: "django"
+  # api_version: "v1"

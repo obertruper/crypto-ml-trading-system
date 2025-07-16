@@ -1,0 +1,23 @@
+
+# Добавьте эти настройки в ваш config/config.yaml:
+
+model:
+  batch_size: 512  # Увеличено для лучшей утилизации GPU
+  use_amp: true    # Включить mixed precision
+  amp_dtype: bfloat16  # BF16 лучше для RTX 5090
+  gradient_checkpointing: true  # Экономия памяти
+  compile_model: true  # torch.compile() для ускорения
+
+training:
+  accumulation_steps: 4  # Градиентная аккумуляция
+  max_grad_norm: 1.0  # Стабилизация градиентов
+  
+performance:
+  num_workers: 8  # Увеличено для быстрой загрузки
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
+  
+optimizer:
+  use_fused: true  # Fused optimizers для скорости
+  foreach: true    # Оптимизация для больших моделей

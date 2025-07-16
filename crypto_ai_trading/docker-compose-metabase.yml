@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase_crypto_ai
+    ports:
+      - "3333:3000"  # Используем порт 3333 для избежания конфликтов
+    environment:
+      # Настройки Metabase
+      MB_JETTY_PORT: 3000
+      JAVA_OPTS: "-Xmx2g -Duser.timezone=UTC"  # Увеличиваем память и форсируем UTC
+      # Timezone для корректного отображения времени
+      TZ: "UTC"
+      # Дополнительные настройки для PostgreSQL
+      MB_DB_CONNECTION_TIMEOUT_MS: "20000"
+    volumes:
+      - ./metabase-data:/metabase.db
+    restart: unless-stopped
+    networks:
+      - crypto-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Для доступа к локальной PostgreSQL
+
+networks:
+  crypto-network:
+    driver: bridge

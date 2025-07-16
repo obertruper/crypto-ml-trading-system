@@ -1,0 +1,131 @@
+# Профили серверов для обучения
+# Позволяет легко переключаться между разными GPU серверами
+
+# Текущий активный профиль
+active_profile: "vast_ai_current"
+
+# Профили серверов
+profiles:
+  # Текущий Vast.ai сервер
+  vast_ai_current:
+    name: "Vast.ai RTX 4090 x2"
+    description: "2x RTX 4090, 48GB VRAM, 90GB RAM"
+    connection:
+      host: "109.198.107.223"
+      port: 48937
+      user: "root"
+      key_path: "~/.ssh/id_rsa"
+    specs:
+      gpu: "2x RTX 4090"
+      vram: "48 GB"
+      ram: "90 GB"
+      cost_per_hour: "$1.20"
+    ports:
+      ssh: 48937
+      tensorboard: 6007
+      jupyter: 8888
+    paths:
+      remote_project: "/root/crypto_ai_trading"
+      python: "/opt/conda/bin/python"
+    
+  # Альтернативный сервер (ssh1.vast.ai)
+  vast_ai_backup:
+    name: "Vast.ai RTX 3090 x4" 
+    description: "4x RTX 3090, 96GB VRAM, 128GB RAM"
+    connection:
+      host: "ssh1.vast.ai"
+      port: 30421
+      user: "root"
+      key_path: "~/.ssh/id_rsa"
+    specs:
+      gpu: "4x RTX 3090"
+      vram: "96 GB"
+      ram: "128 GB"
+      cost_per_hour: "$2.00"
+    ports:
+      ssh: 30421
+      tensorboard: 6006
+      jupyter: 8888
+    paths:
+      remote_project: "/root/crypto_ai_trading"
+      python: "/opt/conda/bin/python"
+      
+  # Runpod сервер (пример)
+  runpod_server:
+    name: "RunPod RTX A6000"
+    description: "1x RTX A6000, 48GB VRAM, 64GB RAM"
+    connection:
+      host: "your.runpod.server.ip"
+      port: 22
+      user: "root"
+      key_path: "~/.ssh/runpod_key"
+    specs:
+      gpu: "1x RTX A6000"
+      vram: "48 GB"
+      ram: "64 GB"
+      cost_per_hour: "$0.80"
+    ports:
+      ssh: 22
+      tensorboard: 6006
+      jupyter: 8888
+    paths:
+      remote_project: "/workspace/crypto_ai_trading"
+      python: "/opt/conda/bin/python"
+
+  # Локальный сервер (пример)
+  local_gpu:
+    name: "Локальный GPU сервер"
+    description: "Домашний/офисный сервер"
+    connection:
+      host: "192.168.1.100"
+      port: 22
+      user: "username"
+      key_path: "~/.ssh/id_rsa"
+    specs:
+      gpu: "RTX 4090"
+      vram: "24 GB"
+      ram: "32 GB"
+      cost_per_hour: "$0.00"
+    ports:
+      ssh: 22
+      tensorboard: 6006
+      jupyter: 8888
+    paths:
+      remote_project: "/home/username/crypto_ai_trading"
+      python: "/home/username/miniconda3/bin/python"
+
+# Настройки прокси подключений (для сложных случаев)
+proxy_connections:
+  vast_ai_proxy:
+    enabled: false
+    proxy_host: "ssh8.vast.ai"
+    proxy_port: 13641
+    proxy_user: "root"
+    proxy_key: "~/.ssh/vast_ai_key"
+    
+# Общие настройки синхронизации
+sync_settings:
+  exclude_patterns:
+    - "cache/*"
+    - "*.pyc"
+    - "__pycache__/"
+    - ".git/"
+    - "logs/*"
+    - "models_saved/*"
+    - "experiments/runs/*"
+    - ".DS_Store"
+    - "*.log"
+  include_patterns:
+    - "*.py"
+    - "*.yaml"
+    - "*.yml"
+    - "requirements.txt"
+    - "scripts/*"
+    - "config/*"
+    
+# Мониторинг настройки
+monitoring:
+  auto_open_tensorboard: true
+  check_gpu_usage: true
+  log_download_on_completion: true
+  notification_webhook: null  # Для уведомлений об окончании обучения

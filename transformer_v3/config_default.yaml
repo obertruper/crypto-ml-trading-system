@@ -1,0 +1,82 @@
+# Конфигурация по умолчанию для Transformer v3.0
+# Адаптировано из XGBoost v3.0
+
+database:
+  host: "localhost"
+  port: 5555
+  database: "crypto_trading"
+  user: "ruslan"
+  password: ""
+
+model:
+  # Архитектура TFT
+  hidden_size: 256      # Увеличили для большей выразительности
+  lstm_layers: 3        # Больше слоев для сложных паттернов
+  num_heads: 8          # Больше attention heads
+  dropout_rate: 0.15    # Больше регуляризации
+  state_size: 128       # Увеличили размер состояния
+  attention_head_size: 32
+  
+  # Временные параметры
+  sequence_length: 100  # 25 часов при 15-мин свечах
+  prediction_length: 1
+  
+  # Обучение
+  learning_rate: 0.0005  # Уменьшили для стабильности
+  batch_size: 64        # Увеличили для лучшей генерализации
+  epochs: 200           # Больше эпох для полного обучения
+  early_stopping_patience: 25  # Больше терпения
+  reduce_lr_patience: 8
+  reduce_lr_factor: 0.7  # Мягче снижение LR
+  min_lr: 5e-7
+  
+  # Регуляризация
+  l1_regularization: 0.001    # Добавили L1 для feature selection
+  l2_regularization: 0.005    # Уменьшили L2
+  gradient_clip_val: 0.5      # Более строгий clipping
+  
+  # GPU настройки
+  use_mixed_precision: true
+  memory_growth: true
+
+training:
+  # Основные настройки
+  task_type: "regression"  # regression, classification_binary
+  test_mode: false
+  use_cache: true
+  
+  # Данные
+  test_symbols: ["BTCUSDT", "ETHUSDT"]
+  exclude_symbols: ["TESTUSDT", "TESTBTC"]
+  validation_split: 0.2
+  test_split: 0.1
+  
+  # Балансировка (для классификации)
+  balance_method: "class_weight"  # none, smote, adasyn, class_weight
+  smote_k_neighbors: 5
+  
+  # Отбор признаков
+  feature_selection_method: "hierarchical"
+  top_k_features: 120
+  
+  # Аугментация данных
+  use_data_augmentation: true
+  augmentation_noise_level: 0.005  # Меньше шума для стабильности
+  augmentation_shift_range: 3      # Больше временных сдвигов
+  
+  # Визуализация и мониторинг
+  plot_frequency: 5
+  save_checkpoints: true
+  checkpoint_frequency: 10
+  
+  # Логирование
+  log_dir: "logs"
+  save_plots: true
+  save_models: true
+  verbose: 1
+  use_tensorboard: true
+  
+  # Оптимизация
+  use_optuna: false
+  optuna_trials: 50
+  optuna_cv_folds: 3

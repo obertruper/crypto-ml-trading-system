@@ -1,0 +1,30 @@
+
+# Добавьте эти строки в начало файла training/trainer.py после импортов:
+
+# Оптимизации для RTX 5090
+import warnings
+warnings.filterwarnings("ignore", message=".*CUDA capability.*")
+
+# В методе __init__ класса Trainer добавьте:
+if self.device.type == 'cuda':
+    # Включаем TF32
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    
+    # Компиляция модели (когда будет поддержка)
+    # if hasattr(torch, 'compile') and not hasattr(self.model, '_compiled'):
+    #     self.model = torch.compile(self.model, mode="reduce-overhead")
+    #     self.model._compiled = True
+
+# В методе train_epoch добавьте non_blocking=True:
+inputs = inputs.to(self.device, non_blocking=True)
+targets = targets.to(self.device, non_blocking=True)
+
+# Для gradient accumulation добавьте:
+accumulation_steps = self.config.get('performance', {}).get('gradient_accumulation_steps', 1)
+loss = loss / accumulation_steps
+
+if (batch_idx + 1) % accumulation_steps == 0:
+    self.optimizer.step()
+    self.optimizer.zero_grad()

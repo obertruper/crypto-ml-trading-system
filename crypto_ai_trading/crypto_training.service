@@ -1,0 +1,15 @@
+[Unit]
+Description=Crypto AI Training Service
+After=network.target
+
+[Service]
+Type=simple
+User=obertruper
+WorkingDirectory=/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading
+Environment="PATH=/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/venv_crypto/bin"
+ExecStart=/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/venv_crypto/bin/python main.py --mode train
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

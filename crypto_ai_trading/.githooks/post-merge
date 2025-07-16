@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Post-merge hook - запускается после git pull
+# Автоматически обновляет зависимости и очищает кэш при необходимости
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}🔄 Post-merge hook активирован${NC}"
+
+# Проверяем изменения в requirements.txt
+if git diff HEAD@{1} --name-only | grep -q "requirements.txt"; then
+    echo -e "${YELLOW}📦 Обнаружены изменения в requirements.txt${NC}"
+    echo "Обновляем зависимости..."
+    pip install -r requirements.txt
+fi
+
+# Проверяем изменения в feature_engineering.py
+if git diff HEAD@{1} --name-only | grep -q "data/feature_engineering.py"; then
+    echo -e "${YELLOW}🧹 Обнаружены изменения в feature_engineering.py${NC}"
+    echo "Рекомендуется очистить кэш признаков:"
+    echo -e "${GREEN}rm -rf cache/features/*${NC}"
+    echo -e "${GREEN}python prepare_trading_data.py --force-recreate${NC}"
+fi
+
+# Проверяем изменения в config.yaml
+if git diff HEAD@{1} --name-only | grep -q "config/config.yaml"; then
+    echo -e "${YELLOW}⚙️  Обнаружены изменения в конфигурации${NC}"
+    echo "Проверьте совместимость с вашими локальными настройками"
+fi
+
+echo -e "${GREEN}✅ Синхронизация завершена${NC}"
