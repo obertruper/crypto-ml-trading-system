@@ -12,6 +12,11 @@ import gc
 import h5py
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
+import time
+import psutil
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+import multiprocessing as mp
+from functools import partial
 
 from utils.logger import get_logger
 from data.dataset import TimeSeriesDataset
@@ -153,6 +158,7 @@ class PrecomputedDataset(Dataset):
             self.target_cols = target_cols
         
         # Создаем временный датасет для подготовки данных
+        # ВАЖНО: не держим все данные в памяти одновременно
         self.temp_dataset = TimeSeriesDataset(
             data=data,
             context_window=context_window,
@@ -164,6 +170,14 @@ class PrecomputedDataset(Dataset):
             scaler_path=scaler_path,
             fit_scaler=fit_scaler
         )
+        
+        # Освобождаем оригинальные данные из памяти
+        del data
+        gc.collect()
+        
+        # Проверяем доступную память перед созданием кэша
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        self.logger.info(f"🖥️ Доступная память: {available_memory_gb:.2f} GB")
         
         # Проверяем наличие кэша
         cache_file = self._get_cache_path()
@@ -200,20 +214,110 @@ class PrecomputedDataset(Dataset):
             X_shape = (n_samples,) + X_sample.shape
             y_shape = (n_samples,) + y_sample.shape
             
+            # Оценка размера данных
+            memory_estimate_gb = (np.prod(X_shape) + np.prod(y_shape)) * 4 / (1024**3)
+            self.logger.info(f"💾 Оценочный размер кэша: {memory_estimate_gb:.2f} GB")
+            
+            # Улучшенный расчет размера батча
+            import psutil
+            available_memory_gb = psutil.virtual_memory().available / (1024**3)
+            
+            # Размер одного окна в байтах
+            window_size_bytes = (np.prod(X_sample.shape) + np.prod(y_sample.shape)) * 4
+            
+            # Используем только 30% доступной памяти для безопасности
+            safe_memory_bytes = available_memory_gb * 1024**3 * 0.3
+            
+            # Размер батча с учетом параллельной обработки
+            n_workers = min(mp.cpu_count() - 1, 8)  # Ограничиваем 8 воркерами
+            batch_size = int(safe_memory_bytes / (window_size_bytes * n_workers))
+            batch_size = min(10000, max(500, batch_size))  # От 500 до 10000
+            
+            self.logger.info(f"🔄 Батчевая обработка: {batch_size} окон за раз")
+            self.logger.info(f"⚡ Параллелизация: {n_workers} CPU ядер")
+            self.logger.info(f"💾 Используем {safe_memory_bytes/(1024**3):.1f} GB памяти")
+            
             with h5py.File(cache_file, 'w') as f:
-                # Создаем датасеты
-                X_dataset = f.create_dataset('X', shape=X_shape, dtype='float32')
-                y_dataset = f.create_dataset('y', shape=y_shape, dtype='float32')
+                # Создаем датасеты с оптимальными chunk-ами
+                chunk_size = min(2048, batch_size)  # Увеличенные chunks для batch_size=2048
+                X_dataset = f.create_dataset('X', shape=X_shape, dtype='float32', 
+                                           chunks=(chunk_size,) + X_sample.shape,
+                                           compression=None)  # Без сжатия для максимальной скорости
+                y_dataset = f.create_dataset('y', shape=y_shape, dtype='float32',
+                                           chunks=(chunk_size,) + y_sample.shape,
+                                           compression=None)  # Без сжатия для максимальной скорости
                 
-                # Заполняем данными с прогресс-баром
-                for i in tqdm(range(n_samples), desc="Предвычисление окон"):
-                    X, y, info = self.temp_dataset[i]
-                    X_dataset[i] = X.numpy()
-                    y_dataset[i] = y.numpy()
+                # Заполняем данными батчами
+                n_batches = (n_samples + batch_size - 1) // batch_size
+                
+                # Главный прогресс-бар для батчей
+                batch_pbar = tqdm(range(n_batches), desc="Батчи", position=0)
+                total_processed = 0
+                
+                for batch_idx in batch_pbar:
+                    start_idx = batch_idx * batch_size
+                    end_idx = min(start_idx + batch_size, n_samples)
+                    current_batch_size = end_idx - start_idx
                     
-                    # Периодическая очистка памяти
-                    if i % 10000 == 0:
-                        gc.collect()
+                    # Обновляем информацию о прогрессе
+                    batch_pbar.set_postfix({
+                        'Обработано': f'{total_processed}/{n_samples}',
+                        'Память': f'{psutil.virtual_memory().percent:.1f}%'
+                    })
+                    
+                    # Предварительное выделение памяти для батча
+                    X_batch = np.zeros((current_batch_size,) + X_sample.shape, dtype=np.float32)
+                    y_batch = np.zeros((current_batch_size,) + y_sample.shape, dtype=np.float32)
+                    
+                    # Простая последовательная обработка с прогресс-баром
+                    # ProcessPoolExecutor может вызывать проблемы с памятью при большом количестве данных
+                    window_pbar = tqdm(
+                        range(current_batch_size),
+                        desc=f"Окна батча {batch_idx+1}/{n_batches}",
+                        position=1,
+                        leave=False
+                    )
+                    
+                    for i in window_pbar:
+                        try:
+                            idx = start_idx + i
+                            X, y, info = self.temp_dataset[idx]
+                            X_batch[i] = X.numpy().astype(np.float32)
+                            y_batch[i] = y.numpy().astype(np.float32)
+                            
+                            # Периодическая очистка для предотвращения накопления мусора
+                            if i % 100 == 0 and i > 0:
+                                gc.collect(0)  # Быстрая сборка мусора
+                                
+                        except Exception as e:
+                            self.logger.error(f"Ошибка обработки окна {idx}: {e}")
+                            # Заполняем нулями в случае ошибки
+                            X_batch[i] = np.zeros(X_sample.shape, dtype=np.float32)
+                            y_batch[i] = np.zeros(y_sample.shape, dtype=np.float32)
+                    
+                    # Записываем батч в HDF5
+                    X_dataset[start_idx:end_idx] = X_batch
+                    y_dataset[start_idx:end_idx] = y_batch
+                    
+                    # Обновляем счетчик
+                    total_processed += current_batch_size
+                    
+                    # Агрессивная очистка памяти
+                    del X_batch, y_batch
+                    gc.collect()
+                    
+                    # Проверка памяти и адаптация размера батча
+                    memory_percent = psutil.virtual_memory().percent
+                    if memory_percent > 80:
+                        self.logger.warning(f"⚠️ Высокое использование памяти: {memory_percent:.1f}%")
+                        # Уменьшаем размер батча
+                        batch_size = max(500, int(batch_size * 0.7))
+                        self.logger.info(f"📉 Уменьшен размер батча до {batch_size}")
+                        time.sleep(2)  # Даем системе время на очистку
+                    elif memory_percent < 50 and batch_size < 10000:
+                        # Можем увеличить размер батча
+                        batch_size = min(10000, int(batch_size * 1.2))
+                        self.logger.info(f"📈 Увеличен размер батча до {batch_size}")
             
             # Открываем файл для чтения
             self.h5_file = h5py.File(cache_file, 'r')

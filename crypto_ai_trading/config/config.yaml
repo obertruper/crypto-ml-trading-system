@@ -76,9 +76,9 @@ data:
   test_ratio: 0.2
   train_ratio: 0.6
   val_ratio: 0.2
-  train_stride: 2   # УМЕНЬШЕН для меньшего переобучения
-  val_stride: 2     # ОДИНАКОВЫЙ с train для согласованности распределений
-  max_symbols: 10   # ВРЕМЕННО: для быстрого теста исправлений
+  train_stride: 1   # Используем ВСЕ данные для обучения
+  val_stride: 1     # Используем ВСЕ данные для валидации
+  max_symbols: null   # Использовать все доступные символы (50+)
   walk_forward:
     step_size: 7
     test_window: 30
@@ -166,16 +166,16 @@ loss:
     risk_metrics: 0.4        # Для drawdown/rally
   
   # КРИТИЧНО для борьбы со схлопыванием в FLAT
-  class_weights: [1.3, 1.3, 0.7]  # [LONG, SHORT, FLAT] - сбалансированные веса
-  use_weighted_sampling: true  # ВКЛЮЧЕНО - для балансировки классов без дублирования
+  class_weights: [1.2, 1.2, 1.0]  # [LONG, SHORT, FLAT] - сбалансированные веса для LONG и SHORT
+  use_weighted_sampling: false  # ВРЕМЕННО ОТКЛЮЧЕНО - проблема с производительностью
   # Динамическая балансировка на основе энтропии батча
   adaptive_class_weights: true
-  entropy_min_weight: 0.2  # Минимальный вес для доминирующего класса
+  entropy_min_weight: 0.1  # Еще более низкий минимальный вес для доминирующего класса
   
   # Параметры для предотвращения схлопывания
-  auto_adjust_on_collapse: true
-  collapse_threshold: 0.75
-  min_entropy: 0.6
+  auto_adjust_on_collapse: true  # КРИТИЧНО - автоматическая коррекция при схлопывании
+  collapse_threshold: 0.5  # Более чувствительный порог схлопывания
+  min_entropy: 0.8  # Увеличен минимальный порог энтропии
   
   # Параметры для direction focus (влияют на все типы потерь)
   large_move_threshold: 0.005  # 0.5% - минимальный порог движения для взвешивания
@@ -190,10 +190,14 @@ loss:
   
   # Динамические веса классов для адаптации к изменениям распределения
   use_dynamic_class_weights: true  # Адаптивные веса на основе скользящего среднего батчей
+  
+  # Параметры для warmup направления
+  direction_warmup: 1.0  # Начальный вес для direction loss
+  warmup_epochs: 10  # Количество эпох для увеличения веса до directions_weight
 model:
   activation: gelu
   batch_norm: true
-  batch_size: 512  # Уменьшен для лучшей генерализации
+  batch_size: 2048  # Увеличен для лучшей загрузки RTX 5090
   context_window: 96  # 24 часа истории (96 * 15 минут) - используем существующий кэш
   d_ff: 512  # УМЕНЬШЕН для предотвращения переобучения
   d_model: 256  # УМЕНЬШЕН для предотвращения переобучения
@@ -201,12 +205,12 @@ model:
   attention_dropout: 0.1  # СТАНДАРТНЫЙ для attention слоев
   weight_decay: 0.01  # СТАНДАРТНАЯ L2 регуляризация
   e_layers: 3  # Оптимальное количество слоев
-  early_stopping_patience: 10  # УМЕНЬШЕНА терпимость для строгого контроля переобучения
-  epochs: 100  # Максимум эпох для полного обучения
+  early_stopping_patience: 15  # Увеличена для более полного обучения
+  epochs: 200  # Увеличено для более полного обучения
   gradient_clip: 1.0  # УВЕЛИЧЕН для предотвращения взрывающихся градиентов
   individual: false
   input_size: 240  # Обновлено согласно фактическому количеству признаков в данных
-  learning_rate: 0.00005  # УМЕНЬШЕН LR для более стабильного обучения
+  learning_rate: 0.000005  # ЕЩЕ БОЛЕЕ АККУРАТНОЕ обучение для финальной оптимизации
   min_delta: 0.0001  # МЕНЕЕ чувствительный порог
   n_heads: 8  # Увеличено для лучшей параллелизации на GPU
   name: UnifiedPatchTST  # ИЗМЕНЕНО на унифицированную модель
@@ -261,23 +265,31 @@ model:
   stride: 8  # Увеличен шаг для меньшего перекрытия
   warmup_steps: 500  # Больше warmup шагов
   # Дополнительные параметры против переобучения
-  label_smoothing: 0.05  # Уменьшен для более четкой классификации
+  label_smoothing: 0.2  # УВЕЛИЧЕН для предотвращения переуверенности в FLAT
   mixup_alpha: 0.0      # ОТКЛЮЧЕН Mixup для многозадачного обучения
+  use_ema: false        # ОТКЛЮЧЕН EMA для чистоты обучения
   weight_noise: 0.0     # ОТКЛЮЧЕНО
   temperature_scaling: true  # Калибровка уверенности через температуру
-  temperature: 2.0  # Увеличенная температура для снижения уверенности в FLAT
+  temperature: 2.0  # Оптимальная температура для калибровки вероятностей
   confidence_threshold: 0.0  # ОТКЛЮЧЕНО - позволяем модели свободно предсказывать все классы
+  direction_confidence_threshold: 0.35  # Отсеивать неуверенные предсказания (переводить в FLAT)
   dropout_schedule: false    # ОТКЛЮЧЕНО динамическое уменьшение dropout
+  use_dropout_schedule: false  # ОТКЛЮЧЕНО явно
   
   # Entropy regularization для предотвращения схлопывания
-  entropy_weight: 0.1  # Добавляем штраф за низкую энтропию
-  min_entropy_threshold: 0.5  # Минимальная энтропия предсказаний
+  entropy_weight: 0.8  # УВЕЛИЧЕН для большего разнообразия предсказаний
+  min_entropy_threshold: 0.8  # МАКСИМАЛЬНО УВЕЛИЧЕН минимальный порог энтропии предсказаний
   # L2 регуляризация для предотвращения переобучения
   l2_regularization: 0.001  # Коэффициент L2 регуляризации
   # Параметры для улучшенной версии PatchTST
   use_improvements: false  # Временно отключено до исправления размерностей
   feature_attention: true  # Использовать FeatureAttention
   multi_scale_patches: true  # Использовать многомасштабные патчи
+  # КРИТИЧНО: Инициализация direction head для борьбы со схлопыванием
+  direction_head_init:
+    method: balanced  # balanced или proportional
+    bias_init: neutral  # neutral - нулевая инициализация для всех классов
+    weight_scale: 0.1  # Масштаб для инициализации весов
 optimizer:
   name: AdamW
   params:
@@ -293,11 +305,11 @@ performance:
   data_parallel: true
   device: cuda  # RTX 5090 с 31.4 GB памяти
   mixed_precision: true  # Включено для RTX 5090
-  num_workers: 8  # УВЕЛИЧЕНО для более быстрого создания кэша
+  num_workers: 2  # Оптимально для параллельной загрузки данных
   persistent_workers: true  # Переиспользование воркеров для эффективности
   pin_memory: true
-  prefetch_factor: 8  # УВЕЛИЧЕНО для более быстрого создания кэша
-  gradient_accumulation_steps: 2  # Эффективный batch_size = 16384
+  prefetch_factor: 2  # Оптимально для больших HDF5 файлов
+  gradient_accumulation_steps: 1  # Эффективный batch_size = 2048 (уменьшено для ускорения)
   gpu_cache_clear_freq: 20  # Реже очищать кэш GPU для производительности
   monitor_gpu_memory: true  # Мониторинг использования GPU памяти
   dataloader_pin_memory: true  # Явно включить pin_memory для DataLoader
@@ -364,16 +376,15 @@ risk_management:
     major_risk_multiplier: 1.0
     meme_coin_risk_multiplier: 0.5
 scheduler:
-  name: OneCycleLR  # ИЗМЕНЕНО для динамического LR
+  name: ReduceLROnPlateau  # ИЗМЕНЕНО для отслеживания F1 метрики
   params:
-    max_lr: 0.0003     # УМЕНЬШЕН максимальный LR для стабильности
-    pct_start: 0.05   # 5% времени на разгон - более мягкий пик LR
-    anneal_strategy: cos  # Косинусное затухание
-    cycle_momentum: true
-    base_momentum: 0.85
-    max_momentum: 0.95
-    div_factor: 25      # Начальный LR = max_lr / 25 = 0.000012
-    final_div_factor: 10000  # Финальный LR = max_lr / 10000 = 0.00000003
+    mode: max  # Максимизируем F1
+    factor: 0.5  # Уменьшаем LR в 2 раза
+    patience: 4  # Ждем 4 эпохи без улучшения
+    threshold: 0.001  # Минимальное улучшение для считать прогрессом
+    cooldown: 2  # Ждем 2 эпохи после снижения LR
+    min_lr: 0.0000001  # Минимальный LR (1e-7 как float)
+  monitor: val_macro_f1  # КРИТИЧНО: отслеживаем F1, а не loss (вынесено из params)
 trading:
   max_daily_trades: 15
   max_positions: 5
