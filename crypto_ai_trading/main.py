@@ -314,7 +314,7 @@ def train_model(config: dict, train_loader, val_loader, logger):
         
     else:
         # Одиночная модель
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда используем UnifiedPatchTST для 36 целевых переменных
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда используем UnifiedPatchTST для 20 целевых переменных
         if task_type == 'trading' and n_targets > 10:
             logger.info(f"🎯 Обнаружено {n_targets} целевых переменных - используем UnifiedPatchTST")
             config['model']['name'] = 'UnifiedPatchTST'
@@ -324,7 +324,7 @@ def train_model(config: dict, train_loader, val_loader, logger):
             logger.info("⚠️ torch.compile отключен для RTX 5090 (sm_120) - требуется поддержка в будущих версиях PyTorch")
         elif config['model']['name'] == 'UnifiedPatchTST':
             model = create_unified_model(config)
-            logger.info("📊 Используется UnifiedPatchTST с 36 выходами")
+            logger.info("📊 Используется UnifiedPatchTST с 20 выходами")
             logger.info("⚠️ torch.compile отключен для RTX 5090 (sm_120)")
         else:
             model = create_patchtst_model(config)
