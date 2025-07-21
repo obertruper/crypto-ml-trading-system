@@ -8,11 +8,8 @@ from .losses import (
     MaxDrawdownLoss, RiskAdjustedLoss, FocalLoss, TripletLoss,
     MultiTaskLoss, get_loss_function
 )
-from .ensemble import (
-    BaseEnsemble, VotingEnsemble, StackingEnsemble,
-    BaggingEnsemble, DynamicEnsemble, TemporalEnsemble,
-    create_ensemble
-)
+# Ensemble модули временно отключены
+# from .ensemble import (...)
 
 __all__ = [
     'PatchTSTForPrediction',
@@ -26,13 +23,14 @@ __all__ = [
     'TripletLoss',
     'MultiTaskLoss',
     'get_loss_function',
-    'BaseEnsemble',
-    'VotingEnsemble',
-    'StackingEnsemble',
-    'BaggingEnsemble',
-    'DynamicEnsemble',
-    'TemporalEnsemble',
-    'create_ensemble'
+    # Ensemble модули временно отключены
+    # 'BaseEnsemble',
+    # 'VotingEnsemble',
+    # 'StackingEnsemble',
+    # 'BaggingEnsemble',
+    # 'DynamicEnsemble',
+    # 'TemporalEnsemble',
+    # 'create_ensemble'
 ]
 # Унифицированная модель
 from .patchtst_unified import UnifiedPatchTSTForTrading, create_unified_model

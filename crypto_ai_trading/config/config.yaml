@@ -197,7 +197,7 @@ loss:
 model:
   activation: gelu
   batch_norm: true
-  batch_size: 2048  # Увеличен для лучшей загрузки RTX 5090
+  batch_size: 8192  # Максимальный батч для RTX 5090 с 32GB
   context_window: 96  # 24 часа истории (96 * 15 минут) - используем существующий кэш
   d_ff: 512  # УМЕНЬШЕН для предотвращения переобучения
   d_model: 256  # УМЕНЬШЕН для предотвращения переобучения
@@ -305,11 +305,12 @@ performance:
   data_parallel: true
   device: cuda  # RTX 5090 с 31.4 GB памяти
   mixed_precision: true  # Включено для RTX 5090
-  num_workers: 2  # Оптимально для параллельной загрузки данных
+  num_workers: 4  # Оптимально для загрузки данных
   persistent_workers: true  # Переиспользование воркеров для эффективности
   pin_memory: true
   prefetch_factor: 2  # Оптимально для больших HDF5 файлов
-  gradient_accumulation_steps: 1  # Эффективный batch_size = 2048 (уменьшено для ускорения)
+  shuffle_train: false  # ВРЕМЕННО отключено - проблема со случайным доступом к 93GB HDF5
+  gradient_accumulation_steps: 2  # Эффективный batch_size = 16384
   gpu_cache_clear_freq: 20  # Реже очищать кэш GPU для производительности
   monitor_gpu_memory: true  # Мониторинг использования GPU памяти
   dataloader_pin_memory: true  # Явно включить pin_memory для DataLoader

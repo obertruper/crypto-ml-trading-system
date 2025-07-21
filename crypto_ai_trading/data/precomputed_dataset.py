@@ -487,7 +487,7 @@ def create_precomputed_data_loaders(train_data: pd.DataFrame,
     logger.info(f"   - Test: {len(test_dataset):,} окон")
     
     # Проверяем нужно ли использовать WeightedRandomSampler
-    use_weighted_sampling = config.get('loss', {}).get('use_weighted_sampling', True)
+    use_weighted_sampling = config.get('training', {}).get('use_weighted_sampling', False)
     
     # Создание DataLoader'ов
     if use_weighted_sampling:
@@ -518,10 +518,19 @@ def create_precomputed_data_loaders(train_data: pd.DataFrame,
             collate_fn=custom_collate_fn
         )
     else:
+        # Проверяем настройку shuffle
+        import os
+        shuffle_enabled = config.get('performance', {}).get('shuffle_train', True)
+        if os.environ.get('DISABLE_SHUFFLE', '0') == '1':
+            shuffle_enabled = False
+        
+        if not shuffle_enabled:
+            logger.warning("⚠️ Shuffle отключен для ускорения работы с HDF5 кэшем")
+        
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=shuffle_enabled,
             num_workers=num_workers,
             pin_memory=pin_memory,
             drop_last=drop_last,
