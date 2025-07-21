@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 
 from utils.logger import get_logger
 from .risk_manager import RiskManager, Position
-from .signals import SignalGenerator, Signal
+from .signals import ImprovedSignalGenerator as SignalGenerator, TradingSignal as Signal
 
 class Backtester:
     """Основной класс для бэктестирования торговых стратегий"""

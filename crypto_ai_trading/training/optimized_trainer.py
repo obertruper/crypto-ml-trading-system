@@ -390,6 +390,33 @@ class OptimizedTrainer(Trainer):
                                f"Macro F1: {val_metrics.get('macro_f1_overall', 0):.4f} "
                                f"(best F1: {best_macro_f1:.4f}, patience: {patience_counter})")
                 
+                # Детальное логирование распределения предсказаний направлений
+                if 'predicted_distribution' in val_metrics:
+                    pred_dist = val_metrics['predicted_distribution']
+                    actual_dist = val_metrics.get('actual_distribution', {})
+                    
+                    self.logger.info("📊 Распределение предсказанных направлений:")
+                    for timeframe in ['15m', '1h', '4h', '12h']:
+                        if f'direction_{timeframe}' in pred_dist:
+                            pred = pred_dist[f'direction_{timeframe}']
+                            actual = actual_dist.get(f'direction_{timeframe}', {})
+                            self.logger.info(f"   {timeframe}: LONG: {pred.get('LONG', 0):.1%} "
+                                           f"(факт: {actual.get('LONG', 0):.1%}), "
+                                           f"SHORT: {pred.get('SHORT', 0):.1%} "
+                                           f"(факт: {actual.get('SHORT', 0):.1%}), "
+                                           f"FLAT: {pred.get('FLAT', 0):.1%} "
+                                           f"(факт: {actual.get('FLAT', 0):.1%})")
+                
+                # Логирование энтропии предсказаний
+                if 'prediction_entropy' in val_metrics:
+                    avg_entropy = val_metrics['prediction_entropy'].get('average', 0)
+                    self.logger.info(f"🎲 Средняя энтропия предсказаний: {avg_entropy:.3f} "
+                                   f"(макс: {np.log(3):.3f})")
+                    
+                    # Предупреждение о схлопывании
+                    if avg_entropy < 0.5:
+                        self.logger.warning("⚠️ НИЗКАЯ ЭНТРОПИЯ! Модель может схлопываться в один класс!")
+                
                 if patience_counter >= self.early_stopping_patience:
                     self.logger.info("⚠️ Early stopping triggered!")
                     break
@@ -402,7 +429,15 @@ class OptimizedTrainer(Trainer):
                     # ReduceLROnPlateau требует метрику
                     if type(self.scheduler).__name__ == 'ReduceLROnPlateau':
                         if val_loader is not None:
-                            self.scheduler.step(val_metrics['val_loss'])
+                            # Используем macro F1 вместо val_loss если доступно
+                            # ИСПРАВЛЕНО: monitor теперь на верхнем уровне scheduler, а не в params
+                            metric_name = self.config.get('scheduler', {}).get('monitor', 'val_loss')
+                            if metric_name == 'val_macro_f1':
+                                metric_value = val_metrics.get('macro_f1_overall', 0.0)
+                                self.logger.info(f"📊 Scheduler: используем macro_f1_overall = {metric_value:.4f}")
+                            else:
+                                metric_value = val_metrics.get(metric_name, val_metrics['val_loss'])
+                            self.scheduler.step(metric_value)
                         else:
                             self.scheduler.step(train_metrics['loss'])
                     else:
@@ -915,5 +950,46 @@ class OptimizedTrainer(Trainer):
             
         except Exception as e:
             self.logger.warning(f"⚠️ Ошибка расчета enhanced метрик: {e}")
+        
+        # Добавляем сводные метрики распределения для логирования
+        predicted_distribution = {}
+        actual_distribution = {}
+        prediction_entropy = {}
+        
+        for i, tf in enumerate(['15m', '1h', '4h', '12h']):
+            # Извлекаем предсказания направлений
+            if hasattr(all_outputs, '_direction_logits'):
+                direction_logits = all_outputs._direction_logits[:, i, :]
+                probs = torch.softmax(direction_logits, dim=-1)
+                pred_classes = torch.argmax(probs, dim=-1)
+                
+                # Энтропия предсказаний
+                log_probs = torch.log(probs + 1e-8)
+                entropy = -torch.sum(probs * log_probs, dim=-1).mean().item()
+                normalized_entropy = entropy / np.log(3)  # Нормализуем на макс энтропию
+                prediction_entropy[f'direction_{tf}'] = normalized_entropy
+            else:
+                pred_classes = torch.round(all_outputs[:, 4+i]).clamp(0, 2).long()
+            
+            true_classes = all_targets[:, 4+i].long()
+            
+            # Распределение предсказаний
+            pred_dist = {}
+            actual_dist = {}
+            for cls, name in enumerate(['LONG', 'SHORT', 'FLAT']):
+                pred_dist[name] = (pred_classes == cls).float().mean().item()
+                actual_dist[name] = (true_classes == cls).float().mean().item()
+            
+            predicted_distribution[f'direction_{tf}'] = pred_dist
+            actual_distribution[f'direction_{tf}'] = actual_dist
+        
+        # Средняя энтропия
+        if prediction_entropy:
+            avg_entropy = np.mean(list(prediction_entropy.values()))
+            prediction_entropy['average'] = avg_entropy
+        
+        metrics['predicted_distribution'] = predicted_distribution
+        metrics['actual_distribution'] = actual_distribution
+        metrics['prediction_entropy'] = prediction_entropy
         
         return metrics

@@ -3,7 +3,7 @@
 """
 
 from .risk_manager import RiskManager
-from .signals import SignalGenerator
+from .signals import ImprovedSignalGenerator as SignalGenerator
 from .backtester import Backtester
 
 __all__ = [

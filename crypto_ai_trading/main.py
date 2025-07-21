@@ -393,64 +393,49 @@ def train_model(config: dict, train_loader, val_loader, logger):
     return model, best_model_path, train_loader
 
 def backtest_strategy(config: dict, model, test_loader, train_loader, logger):
-    """Бэктестирование стратегии"""
+    """Бэктестирование стратегии с UnifiedPatchTST"""
     logger.start_stage("backtesting")
     
-    logger.info("💰 Запуск бэктестирования...")
+    logger.info("💰 Запуск современного бэктестирования для UnifiedPatchTST...")
     
-    # Инициализация компонентов торговли
-    from trading.risk_manager import RiskManager
-    from trading.signals import SignalGenerator
-    from trading.backtester import Backtester
+    # Используем новый UnifiedBacktester
+    from trading.unified_backtester import UnifiedBacktester
     
-    risk_manager = RiskManager(config)
-    signal_generator = SignalGenerator(config)
-    backtester = Backtester(config)
+    # Создаем бэктестер
+    backtester = UnifiedBacktester(config)
     
-    # Генерация предсказаний модели (фиктивных для демонстрации)
-    logger.info("🔮 Генерация предсказаний модели...")
+    # Запускаем бэктестинг с реальными предсказаниями модели
+    logger.info("🔮 Генерация предсказаний модели на тестовых данных...")
     
-    # Создаем фиктивные предсказания на основе данных
-    sample_batch = next(iter(test_loader))
-    X_sample, y_sample, _ = sample_batch
-    
-    n_samples = len(test_loader.dataset) if hasattr(test_loader, 'dataset') else 1000
-    n_targets = y_sample.shape[-1] if y_sample is not None else 1
-    
-    predictions = {
-        'price_pred': np.random.random((n_samples, config['model']['pred_len'], n_targets)),
-        'confidence': np.random.uniform(0.5, 0.9, n_samples)
-    }
-    
-    # Создаем фиктивные рыночные данные для демонстрации
-    test_data = pd.DataFrame({
-        'datetime': pd.date_range('2025-01-01', periods=n_samples, freq='15min'),
-        'symbol': np.random.choice(['BTCUSDT', 'ETHUSDT'], n_samples),
-        'close': np.random.uniform(30000, 70000, n_samples),
-        'volume': np.random.uniform(1000, 10000, n_samples)
-    })
-    
-    # Запуск бэктестинга
-    logger.info("🏃 Запуск бэктестинга...")
-    backtest_results = backtester.run_backtest(
-        market_data=test_data,
-        features=test_data,  # Упрощение для демо
-        model_predictions=predictions
-    )
+    try:
+        # Запуск бэктестинга
+        backtest_results = backtester.run_backtest(model, test_loader)
+    except Exception as e:
+        logger.error(f"❌ Ошибка в бэктестинге: {e}")
+        # Возвращаем пустые результаты при ошибке
+        backtest_results = {
+            'total_trades': 0,
+            'win_rate': 0,
+            'total_return': 0,
+            'sharpe_ratio': 0,
+            'max_drawdown': 0,
+            'profit_factor': 0,
+            'final_balance': config['backtesting']['initial_capital']
+        }
     
     # Отображение результатов
     logger.info("📈 РЕЗУЛЬТАТЫ БЭКТЕСТИНГА:")
-    logger.info(f"  Начальный капитал: ${backtest_results['initial_capital']:,.2f}")
-    logger.info(f"  Финальный капитал: ${backtest_results['final_capital']:,.2f}")
-    logger.info(f"  Общая доходность: {backtest_results['total_return_pct']:.2f}%")
-    logger.info(f"  Коэффициент Шарпа: {backtest_results['sharpe_ratio']:.2f}")
-    logger.info(f"  Максимальная просадка: {backtest_results['max_drawdown_pct']:.2f}%")
-    logger.info(f"  Win Rate: {backtest_results['win_rate_pct']:.2f}%")
-    logger.info(f"  Всего сделок: {backtest_results['total_trades']}")
+    logger.info(f"  Начальный капитал: ${config['backtesting']['initial_capital']:,.2f}")
+    logger.info(f"  Финальный капитал: ${backtest_results.get('final_balance', config['backtesting']['initial_capital']):,.2f}")
+    logger.info(f"  Общая доходность: {backtest_results.get('total_return', 0)*100:.2f}%")
+    logger.info(f"  Коэффициент Шарпа: {backtest_results.get('sharpe_ratio', 0):.2f}")
+    logger.info(f"  Максимальная просадка: {backtest_results.get('max_drawdown', 0)*100:.2f}%")
+    logger.info(f"  Win Rate: {backtest_results.get('win_rate', 0)*100:.2f}%")
+    logger.info(f"  Всего сделок: {backtest_results.get('total_trades', 0)}")
     
     logger.end_stage("backtesting", 
-                    total_return=backtest_results['total_return_pct'],
-                    sharpe_ratio=backtest_results['sharpe_ratio'])
+                    total_return=backtest_results.get('total_return', 0)*100,
+                    sharpe_ratio=backtest_results.get('sharpe_ratio', 0))
     
     return backtest_results
 
@@ -616,7 +601,7 @@ def main():
         train_loader, val_loader, test_loader = None, None, None
         config_updated = config.copy()
         
-        if args.mode in ['data', 'train', 'full', 'production']:
+        if args.mode in ['data', 'train', 'full', 'production', 'backtest']:
             # Production режим эквивалентен train с production конфигурацией
             if args.mode == 'production':
                 logger.info("🏭 Production режим активирован - используем оптимизированные настройки")
@@ -646,6 +631,12 @@ def main():
                 logger.info("🔄 Кэшированные данные не найдены, создаем новые...")
                 train_loader, val_loader, test_loader = prepare_data(config, logger)
                 config_updated = config  # используем оригинальную конфигурацию
+            elif args.mode == 'backtest':
+                # Для backtest пробуем загрузить существующие данные
+                logger.info("🔍 Режим backtest - ищем существующие данные...")
+                train_loader, val_loader, test_loader, config_updated = create_unified_data_loaders(
+                    config, demo_mode=False
+                )
             else:
                 # Режим train без кэшированных данных
                 logger.error("❌ Режим train требует наличия кэшированных данных!")
