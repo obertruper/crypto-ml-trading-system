@@ -402,7 +402,7 @@ validation:
     no_shuffle: true
     gap_between_splits: true
 staged_training:
-  enabled: true
+  enabled: false  # ОТКЛЮЧЕНО: использует model.eval() во время обучения, вызывая коллапс в FLAT!
   mixed_precision: false
   stages:
   - stage: 1

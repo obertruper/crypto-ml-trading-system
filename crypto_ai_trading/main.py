@@ -1125,33 +1125,9 @@ def train_model(config: dict, train_loader, val_loader, logger, model_type='unif
         device = torch.device('cpu')
         logger.warning("⚠️ GPU не доступен, используется CPU")
     
-    # Проверяем, какой trainer использовать
-    if args and hasattr(args, 'curriculum_stage') and args.curriculum_stage > 0:
-        # Используем Curriculum Learning
-        logger.info(f"🎓 Используется Curriculum Learning (этап {args.curriculum_stage})")
-        from training.curriculum_trainer import CurriculumTrainer
-        trainer = CurriculumTrainer(model, config, device=device, logger=logger)
-        
-        # Запускаем curriculum обучение
-        curriculum_results = trainer.train_curriculum(
-            train_loader, val_loader,
-            start_stage=args.curriculum_stage if args.curriculum_stage else 1,
-            resume_from=args.resume_from
-        )
-        
-        # Используем последний checkpoint как лучшую модель
-        if trainer.stage_checkpoints:
-            best_model_path = Path(trainer.stage_checkpoints[-1])
-            logger.info(f"✅ Curriculum обучение завершено. Лучшая модель: {best_model_path}")
-        
-    elif config.get('staged_training', {}).get('enabled', False):
-        logger.info("🎯 Используется поэтапное обучение (StagedTrainer)")
-        from training.staged_trainer import StagedTrainer
-        trainer = StagedTrainer(model, config, device=device)
-    else:
-        # Создание оптимизированного трейнера с явным указанием устройства
-        from training.optimized_trainer import OptimizedTrainer
-        trainer = OptimizedTrainer(model, config, device=device)
+    # Используем ТОЛЬКО OptimizedTrainer - он стабильный и не вызывает коллапс
+    from training.optimized_trainer import OptimizedTrainer
+    trainer = OptimizedTrainer(model, config, device=device)
     
     # Проверка размещения модели
     logger.info(f"✅ Модель на устройстве: {next(model.parameters()).device}")
