@@ -103,6 +103,10 @@ class TimeSeriesDataset(Dataset):
         
         if self.normalize:
             self._setup_normalization(scaler_path, fit_scaler)
+
+        self.column_clip_bounds: Dict[str, Tuple[float, float]] = {}
+        if self.normalize:
+            self._compute_column_clip_bounds()
         
         self.logger.info(f"Dataset создан: {len(self)} примеров, "
                         f"{len(self.feature_cols)} признаков, "
@@ -181,7 +185,7 @@ class TimeSeriesDataset(Dataset):
         else:
             self.logger.info("🔨 Создание нового scaler...")
             self.scaler = RobustScaler(quantile_range=(5, 95))
-            
+
             if fit_scaler:
                 # Фитим scaler на тренировочных данных
                 self.logger.info("📊 Обучение scaler на данных...")
@@ -229,6 +233,31 @@ class TimeSeriesDataset(Dataset):
         
         self.logger.info(f"✅ Нормализация настроена: {len(self.volume_based_cols)} объемных, "
                         f"{len(self.price_based_cols)} ценовых, {len(self.ratio_cols)} ratio колонок")
+
+    def _compute_column_clip_bounds(self):
+        """Предварительный расчет квантилей для клиппинга признаков"""
+        self.logger.info("📐 Предварительный расчет квантилей для клиппинга признаков")
+
+        for col in self.feature_cols:
+            if col in self.ratio_cols or col in self.skip_scale_cols:
+                continue
+
+            series = pd.to_numeric(self.data[col], errors='coerce')
+            if col in self.volume_based_cols:
+                series = np.log1p(np.clip(series, 0, None))
+
+            values = series.replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=np.float64)
+
+            if values.size < 100:
+                continue
+
+            q01 = np.nanpercentile(values, 1)
+            q99 = np.nanpercentile(values, 99)
+
+            if np.isfinite(q01) and np.isfinite(q99):
+                self.column_clip_bounds[col] = (q01, q99)
+
+        self.logger.info(f"✅ Предрасчитаны квантили для {len(self.column_clip_bounds)} колонок")
     
     def __len__(self):
         return len(self.indices)
@@ -277,7 +306,7 @@ class TimeSeriesDataset(Dataset):
         if self.normalize and self.scaler is not None and len(self.scale_indices) > 0:
             # Создаем копию для нормализации
             norm_values = feature_values.copy()
-            
+
             # Применяем log-трансформацию к объемным колонкам
             for i, col in enumerate(self.feature_cols):
                 if col in self.volume_based_cols and col not in self.skip_scale_cols:
@@ -286,11 +315,11 @@ class TimeSeriesDataset(Dataset):
             
             # Клиппинг экстремальных значений
             for i, col in enumerate(self.feature_cols):
-                if col not in self.ratio_cols and col not in self.skip_scale_cols:  # Не клиппим ratio или skip-колонки
-                    # Используем квантили из обучающих данных
-                    q99 = np.percentile(norm_values[:, i], 99)
-                    q01 = np.percentile(norm_values[:, i], 1)
-                    norm_values[:, i] = np.clip(norm_values[:, i], q01, q99)
+                if col not in self.ratio_cols and col not in self.skip_scale_cols:
+                    bounds = self.column_clip_bounds.get(col)
+                    if bounds:
+                        q01, q99 = bounds
+                        norm_values[:, i] = np.clip(norm_values[:, i], q01, q99)
             
             # Применяем RobustScaler
             try:

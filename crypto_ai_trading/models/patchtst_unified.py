@@ -524,12 +524,18 @@ class UnifiedPatchTSTForTrading(nn.Module):
     def get_direction_l2_loss(self) -> torch.Tensor:
         """Вычисляет L2 регуляризацию для direction head"""
         l2_loss = 0.0
-        
-        # Добавляем L2 регуляризацию только для direction head
-        for name, param in self.direction_head.named_parameters():
-            if 'weight' in name:
-                l2_loss += torch.norm(param, 2) ** 2
-                
+
+        heads = []
+        if hasattr(self, 'direction_heads') and len(self.direction_heads) > 0:
+            heads.extend(list(self.direction_heads))
+        if hasattr(self, 'direction_head'):
+            heads.append(self.direction_head)
+
+        for head in heads:
+            for name, param in head.named_parameters():
+                if 'weight' in name:
+                    l2_loss += torch.norm(param, 2) ** 2
+
         return l2_loss * self.config.get('model', {}).get('direction_l2_weight', 0.001)
     
     def get_output_names(self) -> List[str]:
@@ -1068,18 +1074,60 @@ class DirectionalMultiTaskLoss(nn.Module):
 
         # Обработка targets как словаря или тензора
         if isinstance(targets, dict):
-            # Если targets - словарь, извлекаем значения
-            future_returns_target = targets.get('future_returns', targets.get('future_return_15m', None))
-            if future_returns_target is not None and future_returns_target.dim() == 1:
-                # Если только один целевой возврат, используем его для всех горизонтов
-                future_returns_target = future_returns_target.unsqueeze(1).expand(-1, 4)
-            direction_target = targets.get('directions', targets.get('direction_15m', None))
+            # Если targets - словарь, извлекаем значения с полным набором таймфреймов
+            future_returns_target = targets.get('future_returns', None)
+            if future_returns_target is None:
+                future_return_keys = [
+                    'future_return_15m', 'future_return_1h',
+                    'future_return_4h', 'future_return_12h'
+                ]
+                if all(k in targets for k in future_return_keys):
+                    future_returns_target = torch.stack(
+                        [targets[k].float() for k in future_return_keys], dim=1
+                    )
+            direction_target = targets.get('directions', None)
+            if direction_target is None:
+                direction_keys = [
+                    'direction_15m', 'direction_1h',
+                    'direction_4h', 'direction_12h'
+                ]
+                if all(k in targets for k in direction_keys):
+                    direction_target = torch.stack(
+                        [targets[k].long() for k in direction_keys], dim=1
+                    )
             long_levels_target = targets.get('long_levels', None)
+            if long_levels_target is None:
+                long_keys = [
+                    'long_will_reach_1pct_4h', 'long_will_reach_2pct_4h',
+                    'long_will_reach_3pct_12h', 'long_will_reach_5pct_12h'
+                ]
+                if all(k in targets for k in long_keys):
+                    long_levels_target = torch.stack(
+                        [targets[k].float() for k in long_keys], dim=1
+                    )
             short_levels_target = targets.get('short_levels', None)
+            if short_levels_target is None:
+                short_keys = [
+                    'short_will_reach_1pct_4h', 'short_will_reach_2pct_4h',
+                    'short_will_reach_3pct_12h', 'short_will_reach_5pct_12h'
+                ]
+                if all(k in targets for k in short_keys):
+                    short_levels_target = torch.stack(
+                        [targets[k].float() for k in short_keys], dim=1
+                    )
             risk_metrics_target = targets.get('risk_metrics', None)
+            if risk_metrics_target is None:
+                risk_keys = [
+                    'max_drawdown_1h', 'max_rally_1h',
+                    'max_drawdown_4h', 'max_rally_4h'
+                ]
+                if all(k in targets for k in risk_keys):
+                    risk_metrics_target = torch.stack(
+                        [targets[k].float() for k in risk_keys], dim=1
+                    )
         else:
             # Если targets - тензор, используем индексы
-            future_returns_target = targets[:, 0:4] / 100.0  # Конвертируем из % в доли
+            future_returns_target = targets[:, 0:4]
             direction_target = targets[:, 4:8]
             long_levels_target = targets[:, 8:12]
             short_levels_target = targets[:, 12:16]
@@ -1089,20 +1137,20 @@ class DirectionalMultiTaskLoss(nn.Module):
         if use_all_losses or "future_returns" in self.active_losses:
             if future_returns_target is not None:
                 future_returns_pred = outputs[:, 0:4]
-                # target уже нормализован выше, дублирование убрано
-            
-            # Взвешивание для крупных движений
-            abs_returns = torch.abs(future_returns_target)
-            large_move_mask = abs_returns > self.min_movement_threshold
-            
-            mse_loss = self.mse_loss(future_returns_pred, future_returns_target)
-            
-            # Применяем больший вес к крупным движениям
-            movement_weights = torch.ones_like(mse_loss)
-            movement_weights[large_move_mask] = self.large_move_weight
-            
-            future_returns_loss = (mse_loss * movement_weights).mean()
-            losses.append(future_returns_loss * self.future_returns_weight)
+                future_returns_target = future_returns_target.to(future_returns_pred.device)
+
+                # Взвешивание для крупных движений
+                abs_returns = torch.abs(future_returns_target)
+                large_move_mask = abs_returns > self.min_movement_threshold
+
+                mse_loss = self.mse_loss(future_returns_pred, future_returns_target)
+
+                # Применяем больший вес к крупным движениям
+                movement_weights = torch.ones_like(mse_loss)
+                movement_weights[large_move_mask] = self.large_move_weight
+
+                future_returns_loss = (mse_loss * movement_weights).mean()
+                losses.append(future_returns_loss * self.future_returns_weight)
         
         # 2. Direction Loss (индексы 4-7) - CrossEntropy для 3-классовой классификации
         if use_all_losses or "directions" in self.active_losses:
@@ -1120,6 +1168,7 @@ class DirectionalMultiTaskLoss(nn.Module):
 
                     # Получаем текущие веса (могут быть изменены динамически)
                     current_class_weights = self.class_weights.to(direction_logits.device)
+                    direction_targets = direction_targets.to(direction_logits.device)
 
                     # Энтропийная регуляризация и экстренная коррекция
                     entropy_weight = self.config.get('model', {}).get('entropy_weight', 0.1)
@@ -1194,6 +1243,7 @@ class DirectionalMultiTaskLoss(nn.Module):
         if use_all_losses or "long_levels" in self.active_losses:
             if long_levels_target is not None:
                 long_levels_pred = outputs[:, 8:12]
+                long_levels_target = long_levels_target.to(long_levels_pred.device)
                 long_levels_loss = self.bce_with_logits_loss(long_levels_pred, long_levels_target).mean()
                 losses.append(long_levels_loss * self.long_levels_weight)
         
@@ -1201,6 +1251,7 @@ class DirectionalMultiTaskLoss(nn.Module):
         if use_all_losses or "short_levels" in self.active_losses:
             if short_levels_target is not None:
                 short_levels_pred = outputs[:, 12:16]
+                short_levels_target = short_levels_target.to(short_levels_pred.device)
                 short_levels_loss = self.bce_with_logits_loss(short_levels_pred, short_levels_target).mean()
                 losses.append(short_levels_loss * self.short_levels_weight)
         
@@ -1208,9 +1259,7 @@ class DirectionalMultiTaskLoss(nn.Module):
         if use_all_losses or "risk_metrics" in self.active_losses:
             if risk_metrics_target is not None:
                 risk_metrics_pred = outputs[:, 16:20]
-                # Нормализуем если в процентах и если targets - тензор
-                if not isinstance(targets, dict):
-                    risk_metrics_target = risk_metrics_target / 100.0
+                risk_metrics_target = risk_metrics_target.to(risk_metrics_pred.device)
                 risk_metrics_loss = self.mse_loss(risk_metrics_pred, risk_metrics_target).mean()
                 losses.append(risk_metrics_loss * self.risk_metrics_weight)
         

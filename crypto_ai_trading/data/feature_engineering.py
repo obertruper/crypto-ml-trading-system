@@ -1693,14 +1693,20 @@ class FeatureEngineer:
             '12h': 48    # 12 часов
         }
         
-        # Пороги для классификации направления
-        # РАСШИРЕННЫЕ ПОРОГИ для правильного баланса FLAT (цель: 40-50% FLAT)
-        # Учитываем высокую волатильность крипто и необходимость фильтрации шума
+        # Динамические пороги для классификации направления на основе исторической волатильности
+        volatility_reference = (
+            df.groupby('symbol')['returns']
+            .transform(lambda x: x.rolling(96, min_periods=48).std())
+        )
+        # Заполняем пропуски медианой по символу
+        symbol_vol_median = df.groupby('symbol')['returns'].transform(lambda x: x.abs().rolling(96, min_periods=24).median())
+        volatility_reference = volatility_reference.fillna(symbol_vol_median).fillna(0.0015)
+
         direction_thresholds = {
-            '15m': 0.0025,  # 0.25% - увеличен для большего FLAT (было 0.15%)
-            '1h': 0.005,    # 0.5% - более консервативный порог (было 0.3%)
-            '4h': 0.010,    # 1.0% - существенное движение (было 0.6%)
-            '12h': 0.015    # 1.5% - значимый тренд (было 1.0%)
+            '15m': volatility_reference.mul(0.8).clip(lower=0.0012, upper=0.01),
+            '1h': volatility_reference.mul(1.4).clip(lower=0.0025, upper=0.02),
+            '4h': volatility_reference.mul(2.4).clip(lower=0.004, upper=0.04),
+            '12h': volatility_reference.mul(3.2).clip(lower=0.006, upper=0.06)
         }
         
         # Уровни прибыли для бинарных целевых
@@ -1726,69 +1732,44 @@ class FeatureEngineer:
         for period_name in return_periods.keys():
             future_return = df[f'future_return_{period_name}']
             threshold = direction_thresholds[period_name]
-        
-            # ИСПРАВЛЕНО: Правильный маппинг для торговых сигналов
-            # LONG=0 (покупка, ожидание роста)
-            # SHORT=1 (продажа, ожидание падения)
-            # FLAT=2 (нейтрально, боковик)
-            # Используем прямую логику без pd.cut для избежания категориальных данных
+
+            # LONG=0, SHORT=1, FLAT=2
             conditions = [
-                future_return > threshold,   # LONG (рост цены)
-                future_return < -threshold,  # SHORT (падение цены)
+                future_return > threshold,
+                future_return < -threshold,
             ]
-            choices = [0, 1]  # LONG=0, SHORT=1
-            df[f'direction_{period_name}'] = np.select(conditions, choices, default=2)  # FLAT=2 по умолчанию
+            df[f'direction_{period_name}'] = np.select(conditions, [0, 1], default=2)
         
         # C. Достижение уровней прибыли LONG (4) - используем только shift для будущих цен
         for level_name, (profit_threshold, n_candles) in profit_levels.items():
-            # Для каждой строки проверяем достигнет ли максимальная цена нужного уровня
-            max_future_returns = pd.DataFrame()
-            for i in range(1, n_candles + 1):
-                future_high = df.groupby('symbol')['high'].transform(lambda x: x.shift(-i))
-                future_return = (future_high / df['close'] - 1)
-                max_future_returns[f'return_{i}'] = future_return
-        
-            # Максимальный return за период
-            max_return = max_future_returns.max(axis=1)
-            df[f'long_will_reach_{level_name}'] = (max_return >= profit_threshold).astype(int)
-        
+            future_max_high = df.groupby('symbol')['high'].transform(
+                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).max()
+            )
+            future_return = (future_max_high / df['close'] - 1)
+            df[f'long_will_reach_{level_name}'] = (future_return >= profit_threshold).astype(int)
+
         # D. Достижение уровней прибыли SHORT (4)
         for level_name, (profit_threshold, n_candles) in profit_levels.items():
-            # Для SHORT: проверяем минимальную цену
-            min_future_returns = pd.DataFrame()
-            for i in range(1, n_candles + 1):
-                future_low = df.groupby('symbol')['low'].transform(lambda x: x.shift(-i))
-                future_return = (df['close'] / future_low - 1)  # Для SHORT инвертируем
-                min_future_returns[f'return_{i}'] = future_return
-        
-            # Максимальный return для SHORT за период
-            max_return = min_future_returns.max(axis=1)
-            df[f'short_will_reach_{level_name}'] = (max_return >= profit_threshold).astype(int)
-        
+            future_min_low = df.groupby('symbol')['low'].transform(
+                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).min()
+            )
+            future_return = (df['close'] / future_min_low - 1)
+            df[f'short_will_reach_{level_name}'] = (future_return >= profit_threshold).astype(int)
+
         # E. Риск-метрики (4)
         # Максимальная просадка за период (для LONG)
         for period_name, n_candles in [('1h', 4), ('4h', 16)]:
-            min_prices = pd.DataFrame()
-            for i in range(1, n_candles + 1):
-                future_low = df.groupby('symbol')['low'].transform(lambda x: x.shift(-i))
-                min_prices[f'low_{i}'] = future_low
-        
-            # Минимальная цена за период
-            min_price = min_prices.min(axis=1)
-            # ИСПРАВЛЕНО: правильная формула drawdown = (current - min) / current
-            # Положительное значение показывает максимальное падение
-            df[f'max_drawdown_{period_name}'] = ((df['close'] - min_price) / df['close']).fillna(0)
-        
+            min_price = df.groupby('symbol')['low'].transform(
+                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).min()
+            )
+            df[f'max_drawdown_{period_name}'] = ((df['close'] - min_price) / df['close']).clip(lower=0).fillna(0)
+
         # Максимальный рост за период (для SHORT)
         for period_name, n_candles in [('1h', 4), ('4h', 16)]:
-            max_prices = pd.DataFrame()
-            for i in range(1, n_candles + 1):
-                future_high = df.groupby('symbol')['high'].transform(lambda x: x.shift(-i))
-                max_prices[f'high_{i}'] = future_high
-        
-            # Максимальная цена за период
-            max_price = max_prices.max(axis=1)
-            df[f'max_rally_{period_name}'] = (max_price / df['close'] - 1).fillna(0)
+            max_price = df.groupby('symbol')['high'].transform(
+                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).max()
+            )
+            df[f'max_rally_{period_name}'] = (max_price / df['close'] - 1).clip(lower=0).fillna(0)
         
         # ИСПРАВЛЕНО: Убираем торговые сигналы с утечками данных
         # best_action, risk_reward_ratio и optimal_hold_time будут генерироваться
