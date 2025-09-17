@@ -1,5 +1,6 @@
 """
 Инженерия признаков для криптовалютных данных
+ОБНОВЛЕНО: интеграция с новыми компонентами (временные эмбеддинги, контекст рынка)
 """
 
 import pandas as pd
@@ -15,6 +16,18 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from utils.logger import get_logger
+from data.symbol_manager import SymbolManager
+
+# 🆕 ИМПОРТЫ НОВЫХ КОМПОНЕНТОВ
+try:
+    from features.temporal import TemporalEmbeddings
+    from features.market_context import MarketContextFeatures
+    from features.normalization import AdaptiveNormalization
+    NEW_FEATURES_AVAILABLE = True
+except ImportError as e:
+    NEW_FEATURES_AVAILABLE = False
+    print(f"⚠️ Новые features недоступны: {e}")
+    print("Работаем с базовой функциональностью")
 
 class FeatureEngineer:
     """Создание признаков для модели прогнозирования"""
@@ -26,6 +39,42 @@ class FeatureEngineer:
         self.scalers = {}
         self.process_position = None  # Позиция для прогресс-баров при параллельной обработке
         self.disable_progress = False  # Флаг для отключения прогресс-баров
+        
+        # 🆕 ИНИЦИАЛИЗАЦИЯ НОВЫХ КОМПОНЕНТОВ
+        self.new_features_enabled = NEW_FEATURES_AVAILABLE
+        if self.new_features_enabled:
+            # Временные эмбеддинги
+            temporal_config = self.feature_config.get('temporal', {})
+            if temporal_config.get('enable', False):
+                self.temporal_embeddings = TemporalEmbeddings(config)
+                self.logger.info("✅ Временные эмбеддинги инициализированы")
+            else:
+                self.temporal_embeddings = None
+                self.logger.info("⏸️ Временные эмбеддинги отключены")
+            
+            # Контекст рынка
+            context_config = self.feature_config.get('market_context', {})
+            if context_config.get('enable', False):
+                self.market_context = MarketContextFeatures(config)
+                self.logger.info("✅ Market context инициализирован")
+            else:
+                self.market_context = None
+                self.logger.info("⏸️ Market context отключен")
+                
+            # Адаптивная нормализация
+            norm_config = self.feature_config.get('normalization', {})
+            self.adaptive_norm = AdaptiveNormalization(
+                window=norm_config.get('window', 1000),
+                method=norm_config.get('method', 'revin'),
+                min_periods=norm_config.get('min_periods', 100),
+                causal_only=norm_config.get('causal_only', True)
+            )
+            self.logger.info(f"✅ Адаптивная нормализация инициализирована: {norm_config.get('method', 'revin')}")
+        else:
+            self.temporal_embeddings = None
+            self.market_context = None
+            self.adaptive_norm = None
+            self.logger.warning("⚠️ Новые features недоступны - используем базовую функциональность")
     
     @staticmethod
     def safe_divide(numerator: pd.Series, denominator: pd.Series, fill_value=0.0, max_value=1000.0, min_denominator=1e-8) -> pd.Series:
@@ -80,9 +129,28 @@ class FeatureEngineer:
         
         # Валидация данных
         self._validate_data(df)
-        
+
+        # Сохраняем оригинальные колонки для валидации новых признаков
+        original_columns = set(df.columns)
+
+        # 🆕 Кодирование символов (stable ids + базовые атрибуты)
+        try:
+            sym_mgr = SymbolManager(self.config)
+            # Инициализируем маппинг (не используем как булево выражение во избежание неоднозначности DataFrame)
+            sym_mgr.initialize_mappings(df=df)
+            # Присоединяем фичи символов
+            df = sym_mgr.encode_symbols(df)
+            self.logger.info("✅ Добавлены символ-фичи: symbol_id, symbol_index, sector, symbol_rank_norm")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Не удалось добавить symbol mapping фичи: {e}")
+
         featured_dfs = []
         all_symbols_data = {}  # Для enhanced features
+        
+        # 🆕 СОЗДАЕМ ВРЕМЕННЫЕ ЭМБЕДДИНГИ (если включены)
+        if self.temporal_embeddings is not None:
+            df = self.temporal_embeddings.create_temporal_features(df)
+            self.logger.info("✅ Временные эмбеддинги добавлены")
         
         # Первый проход - базовые признаки
         for symbol in df['symbol'].unique():
@@ -96,7 +164,7 @@ class FeatureEngineer:
             symbol_data = self._create_signal_quality_features(symbol_data)
             symbol_data = self._create_futures_specific_features(symbol_data)
             symbol_data = self._create_ml_optimized_features(symbol_data)
-            symbol_data = self._create_temporal_features(symbol_data)
+            symbol_data = self._create_temporal_features(symbol_data)  # Оригинальный метод
             symbol_data = self._create_target_variables(symbol_data)
             
             featured_dfs.append(symbol_data)
@@ -112,9 +180,27 @@ class FeatureEngineer:
         if df['symbol'].nunique() > 1:
             result_df = self._create_cross_asset_features(result_df)
         
+        # 🆕 ДОБАВЛЯЕМ КОНТЕКСТ РЫНКА (если включен и достаточно символов)
+        if self.market_context is not None and df['symbol'].nunique() > 1:
+            result_df = self.market_context.create_market_context_features(result_df)
+            self.logger.info("✅ Market context признаки добавлены")
+        
         # Добавляем enhanced features если запрошено
         if use_enhanced_features:
             result_df = self._add_enhanced_features(result_df, all_symbols_data)
+        
+        # 🆕 АДАПТИВНАЯ НОРМАЛИЗАЦИЯ (если включена)
+        if self.adaptive_norm is not None:
+            # Определяем численные колонки для нормализации
+            numeric_features = self._get_numeric_features_for_normalization(result_df)
+            
+            if numeric_features:
+                result_df = self.adaptive_norm.fit_transform(
+                    result_df, 
+                    feature_columns=numeric_features,
+                    symbol_column='symbol'
+                )
+                self.logger.info(f"✅ Адаптивная нормализация применена к {len(numeric_features)} признакам")
         
         # Обработка NaN значений
         result_df = self._handle_missing_values(result_df)
@@ -122,6 +208,12 @@ class FeatureEngineer:
         # Walk-forward нормализация только если указана дата (иначе нормализация будет в prepare_trading_data.py)
         if train_end_date:
             result_df = self._normalize_walk_forward(result_df, train_end_date)
+        
+        # 🆕 ВАЛИДАЦИЯ НОВЫХ ПРИЗНАКОВ
+        if self.temporal_embeddings is not None or self.market_context is not None or self.adaptive_norm is not None:
+            validation_results = self._validate_new_features(result_df, original_columns)
+            if validation_results['risky_features']:
+                self.logger.warning(f"⚠️ Обнаружены рискованные признаки: {validation_results['risky_features']}")
         
         self._log_feature_statistics(result_df)
         
@@ -1442,9 +1534,9 @@ class FeatureEngineer:
                 if symbol_data[col].isna().any():
                     # Для категориальных переменных (Categorical dtype)
                     if hasattr(symbol_data[col], 'cat'):
-                        # Для категориальных переменных используем наиболее частую категорию или 'FLAT'/'HOLD'
+                        # Для категориальных переменных используем наиболее частую категорию или FLAT=2
                         if 'direction' in col:
-                            symbol_data[col] = symbol_data[col].fillna('FLAT')
+                            symbol_data[col] = symbol_data[col].fillna(2)  # FLAT=2
                         else:
                             # Используем моду (наиболее частое значение)
                             mode = symbol_data[col].mode()
@@ -1477,7 +1569,7 @@ class FeatureEngineer:
                     # Для категориальных переменных
                     if hasattr(result_df[col], 'cat'):
                         if 'direction' in col:
-                            result_df[col] = result_df[col].fillna('FLAT')
+                            result_df[col] = result_df[col].fillna(2)  # FLAT=2
                         else:
                             mode = result_df[col].mode()
                             if len(mode) > 0:
@@ -1602,20 +1694,22 @@ class FeatureEngineer:
         }
         
         # Пороги для классификации направления
-        # ОПТИМИЗИРОВАНЫ для баланса между качеством и количеством сигналов
+        # РАСШИРЕННЫЕ ПОРОГИ для правильного баланса FLAT (цель: 40-50% FLAT)
+        # Учитываем высокую волатильность крипто и необходимость фильтрации шума
         direction_thresholds = {
-            '15m': 0.0015,  # 0.15% - уменьшает шум от мелких движений
-            '1h': 0.003,    # 0.3% - фильтрует случайные колебания
-            '4h': 0.007,    # 0.7% - фокус на значимых движениях
-            '12h': 0.01     # 1% - долгосрочные тренды
+            '15m': 0.0025,  # 0.25% - увеличен для большего FLAT (было 0.15%)
+            '1h': 0.005,    # 0.5% - более консервативный порог (было 0.3%)
+            '4h': 0.010,    # 1.0% - существенное движение (было 0.6%)
+            '12h': 0.015    # 1.5% - значимый тренд (было 1.0%)
         }
         
         # Уровни прибыли для бинарных целевых
+        # РЕАЛИСТИЧНЫЕ уровни с учётом типичной волатильности крипто
         profit_levels = {
-            '1pct_4h': (0.01, 16),    # 1% за 4 часа
-            '2pct_4h': (0.02, 16),    # 2% за 4 часа
-            '3pct_12h': (0.03, 48),   # 3% за 12 часов
-            '5pct_12h': (0.05, 48)    # 5% за 12 часов
+            '1pct_4h': (0.005, 16),   # 0.5% за 4 часа (достижимо в 20-30% случаев)
+            '2pct_4h': (0.01, 16),    # 1% за 4 часа (достижимо в 10-15% случаев)
+            '3pct_12h': (0.015, 48),  # 1.5% за 12 часов (достижимо в 10-15% случаев)
+            '5pct_12h': (0.025, 48)   # 2.5% за 12 часов (достижимо в 5-10% случаев)
         }
         
         # Commission and costs
@@ -1633,11 +1727,17 @@ class FeatureEngineer:
             future_return = df[f'future_return_{period_name}']
             threshold = direction_thresholds[period_name]
         
-            df[f'direction_{period_name}'] = pd.cut(
-                future_return,
-                bins=[-np.inf, -threshold, threshold, np.inf],
-                labels=['DOWN', 'FLAT', 'UP']
-            )
+            # ИСПРАВЛЕНО: Правильный маппинг для торговых сигналов
+            # LONG=0 (покупка, ожидание роста)
+            # SHORT=1 (продажа, ожидание падения)
+            # FLAT=2 (нейтрально, боковик)
+            # Используем прямую логику без pd.cut для избежания категориальных данных
+            conditions = [
+                future_return > threshold,   # LONG (рост цены)
+                future_return < -threshold,  # SHORT (падение цены)
+            ]
+            choices = [0, 1]  # LONG=0, SHORT=1
+            df[f'direction_{period_name}'] = np.select(conditions, choices, default=2)  # FLAT=2 по умолчанию
         
         # C. Достижение уровней прибыли LONG (4) - используем только shift для будущих цен
         for level_name, (profit_threshold, n_candles) in profit_levels.items():
@@ -1675,7 +1775,9 @@ class FeatureEngineer:
         
             # Минимальная цена за период
             min_price = min_prices.min(axis=1)
-            df[f'max_drawdown_{period_name}'] = (df['close'] / min_price - 1).fillna(0)
+            # ИСПРАВЛЕНО: правильная формула drawdown = (current - min) / current
+            # Положительное значение показывает максимальное падение
+            df[f'max_drawdown_{period_name}'] = ((df['close'] - min_price) / df['close']).fillna(0)
         
         # Максимальный рост за период (для SHORT)
         for period_name, n_candles in [('1h', 4), ('4h', 16)]:
@@ -1963,7 +2065,18 @@ class FeatureEngineer:
         if not self.disable_progress:
             self.logger.start_stage("feature_engineering_no_leakage", 
                                    symbols=df['symbol'].nunique())
-        
+
+        # 🆕 Кодирование символов (stable ids + базовые атрибуты) до генерации признаков
+        try:
+            sym_mgr = SymbolManager(self.config)
+            sym_mgr.initialize_mappings(df=df)
+            df = sym_mgr.encode_symbols(df)
+            if not self.disable_progress:
+                self.logger.info("✅ Добавлены символ-фичи: symbol_id, symbol_index, sector, symbol_rank_norm")
+        except Exception as e:
+            if not self.disable_progress:
+                self.logger.warning(f"⚠️ Не удалось добавить symbol mapping фичи: {e}")
+
         # 1. Создание признаков (без нормализации)
         if not self.disable_progress:
             self.logger.info("1/5 - Создание базовых признаков...")
@@ -2039,8 +2152,17 @@ class FeatureEngineer:
             'open', 'high', 'low', 'close', 'volume', 'turnover'
         ]
         
-        # Целевые переменные
-        target_cols = [col for col in train_data.columns if col.startswith(('target_', 'future_', 'optimal_'))]
+        # КРИТИЧНО: Правильное определение всех 20 целевых переменных
+        target_cols = [col for col in train_data.columns if col.startswith((
+            'future_return_',      # 4 переменные: 15m, 1h, 4h, 12h
+            'direction_',          # 4 переменные: направления
+            'long_will_reach_',    # 4 переменные: достижение целей LONG
+            'short_will_reach_',   # 4 переменные: достижение целей SHORT
+            'max_drawdown_',       # 2 переменные: 1h, 4h
+            'max_rally_',          # 2 переменные: 1h, 4h
+            'optimal_',            # legacy переменные для совместимости
+            'target_'              # legacy префикс
+        ))]
         exclude_cols.extend(target_cols)
         
         # Временные колонки (уже нормализованы)
@@ -2053,6 +2175,24 @@ class FeatureEngineer:
                       'close_position', 'bb_position', 'position_in_range_20',
                       'position_in_range_50', 'position_in_range_100']
         exclude_cols.extend(ratio_cols)
+        
+        # КРИТИЧНО: Исключаем ВСЕ целевые переменные из нормализации и клиппинга!
+        target_patterns = [
+            'future_return', 'direction_', 'will_reach', 
+            'long_will_reach', 'short_will_reach',
+            'max_drawdown', 'max_rally',
+            'expected_value', 'optimal_', 'best_', 'target_'
+        ]
+        
+        target_cols = [
+            col for col in train_data.columns 
+            if any(pattern in col.lower() for pattern in target_patterns)
+        ]
+        exclude_cols.extend(target_cols)
+        
+        self.logger.info(f"📊 Исключено целевых переменных из клиппинга: {len(target_cols)}")
+        if len(target_cols) > 0:
+            self.logger.info(f"   Целевые: {target_cols[:5]}...")  # Показываем первые 5
         
         feature_cols = [col for col in train_data.columns if col not in exclude_cols]
         
@@ -2107,10 +2247,17 @@ class FeatureEngineer:
                             self.logger.warning(f"Колонка '{col}' содержит только NaN значения, пропускаем")
                         continue
                     
-                    # Клиппинг экстремальных значений
-                    q01 = train_cleaned[col].quantile(0.01)
-                    q99 = train_cleaned[col].quantile(0.99)
-                    train_cleaned[col] = train_cleaned[col].clip(lower=q01, upper=q99)
+                    # КРИТИЧНО: НЕ применяем клиппинг к целевым переменным!
+                    is_target = any(pattern in col.lower() for pattern in [
+                        'future_return', 'direction_', 'will_reach', 
+                        'max_drawdown', 'max_rally', 'target_'
+                    ])
+                    
+                    if not is_target:
+                        # Клиппинг экстремальных значений ТОЛЬКО для признаков
+                        q01 = train_cleaned[col].quantile(0.01)
+                        q99 = train_cleaned[col].quantile(0.99)
+                        train_cleaned[col] = train_cleaned[col].clip(lower=q01, upper=q99)
                     
                     # Замена inf на конечные значения
                     train_cleaned[col] = train_cleaned[col].replace([np.inf, -np.inf], [q99, q01])
@@ -2131,10 +2278,17 @@ class FeatureEngineer:
                         
                         if train_to_scale[col].notna().sum() == 0:
                             continue
-                            
-                        q01 = train_cleaned[col].quantile(0.01) if col in train_cleaned.columns else train_to_scale[col].quantile(0.01)
-                        q99 = train_cleaned[col].quantile(0.99) if col in train_cleaned.columns else train_to_scale[col].quantile(0.99)
-                        train_to_scale[col] = train_to_scale[col].clip(lower=q01, upper=q99)
+                        
+                        # КРИТИЧНО: НЕ применяем клиппинг к целевым переменным!
+                        is_target = any(pattern in col.lower() for pattern in [
+                            'future_return', 'direction_', 'will_reach', 
+                            'max_drawdown', 'max_rally', 'target_'
+                        ])
+                        
+                        if not is_target:
+                            q01 = train_cleaned[col].quantile(0.01) if col in train_cleaned.columns else train_to_scale[col].quantile(0.01)
+                            q99 = train_cleaned[col].quantile(0.99) if col in train_cleaned.columns else train_to_scale[col].quantile(0.99)
+                            train_to_scale[col] = train_to_scale[col].clip(lower=q01, upper=q99)
                         train_to_scale[col] = train_to_scale[col].replace([np.inf, -np.inf], [q99, q01])
                         train_to_scale[col] = train_to_scale[col].fillna(train_to_scale[col].median())
                     
@@ -2151,10 +2305,17 @@ class FeatureEngineer:
                         
                         if val_to_scale[col].notna().sum() == 0:
                             continue
-                            
-                        q01 = train_cleaned[col].quantile(0.01) if col in train_cleaned.columns else val_to_scale[col].quantile(0.01)
-                        q99 = train_cleaned[col].quantile(0.99) if col in train_cleaned.columns else val_to_scale[col].quantile(0.99)
-                        val_to_scale[col] = val_to_scale[col].clip(lower=q01, upper=q99)
+                        
+                        # КРИТИЧНО: НЕ применяем клиппинг к целевым переменным!
+                        is_target = any(pattern in col.lower() for pattern in [
+                            'future_return', 'direction_', 'will_reach', 
+                            'max_drawdown', 'max_rally', 'target_'
+                        ])
+                        
+                        if not is_target:
+                            q01 = train_cleaned[col].quantile(0.01) if col in train_cleaned.columns else val_to_scale[col].quantile(0.01)
+                            q99 = train_cleaned[col].quantile(0.99) if col in train_cleaned.columns else val_to_scale[col].quantile(0.99)
+                            val_to_scale[col] = val_to_scale[col].clip(lower=q01, upper=q99)
                         val_to_scale[col] = val_to_scale[col].replace([np.inf, -np.inf], [q99, q01])
                         val_to_scale[col] = val_to_scale[col].fillna(val_to_scale[col].median())
                     
@@ -2171,10 +2332,17 @@ class FeatureEngineer:
                         
                         if test_to_scale[col].notna().sum() == 0:
                             continue
-                            
-                        q01 = train_cleaned[col].quantile(0.01) if col in train_cleaned.columns else test_to_scale[col].quantile(0.01)
-                        q99 = train_cleaned[col].quantile(0.99) if col in train_cleaned.columns else test_to_scale[col].quantile(0.99)
-                        test_to_scale[col] = test_to_scale[col].clip(lower=q01, upper=q99)
+                        
+                        # КРИТИЧНО: НЕ применяем клиппинг к целевым переменным!
+                        is_target = any(pattern in col.lower() for pattern in [
+                            'future_return', 'direction_', 'will_reach', 
+                            'max_drawdown', 'max_rally', 'target_'
+                        ])
+                        
+                        if not is_target:
+                            q01 = train_cleaned[col].quantile(0.01) if col in train_cleaned.columns else test_to_scale[col].quantile(0.01)
+                            q99 = train_cleaned[col].quantile(0.99) if col in train_cleaned.columns else test_to_scale[col].quantile(0.99)
+                            test_to_scale[col] = test_to_scale[col].clip(lower=q01, upper=q99)
                         test_to_scale[col] = test_to_scale[col].replace([np.inf, -np.inf], [q99, q01])
                         test_to_scale[col] = test_to_scale[col].fillna(test_to_scale[col].median())
                     
@@ -2225,6 +2393,35 @@ class FeatureEngineer:
                                 train_size=len(train_data),
                                 val_size=len(val_data),
                                 test_size=len(test_data))
+
+        # 🆕 Сохранение разбиений в Parquet для явного просмотра/перезапуска
+        try:
+            from pathlib import Path
+            processed_dir = Path("data/processed")
+            processed_dir.mkdir(parents=True, exist_ok=True)
+            train_path = processed_dir / "train_data.parquet"
+            val_path = processed_dir / "val_data.parquet"
+            test_path = processed_dir / "test_data.parquet"
+            train_data.to_parquet(train_path, index=False)
+            val_data.to_parquet(val_path, index=False)
+            test_data.to_parquet(test_path, index=False)
+            if not self.disable_progress:
+                self.logger.info(f"💾 Сохранены разбиения в {processed_dir} (train/val/test .parquet)")
+
+            # Сохраняем списки колонок (фичи и таргеты) для удобного просмотра
+            feature_cols_file = processed_dir / "feature_cols.txt"
+            target_cols_file = processed_dir / "target_cols.txt"
+            with open(feature_cols_file, 'w', encoding='utf-8') as f:
+                for col in feature_cols:
+                    f.write(f"{col}\n")
+            with open(target_cols_file, 'w', encoding='utf-8') as f:
+                for col in target_cols:
+                    f.write(f"{col}\n")
+            if not self.disable_progress:
+                self.logger.info(f"📝 Списки колонок сохранены: {feature_cols_file.name}, {target_cols_file.name}")
+        except Exception as e:
+            if not self.disable_progress:
+                self.logger.warning(f"⚠️ Не удалось сохранить Parquet разбиения: {e}")
         
         return train_data, val_data, test_data
     
@@ -2284,3 +2481,233 @@ class FeatureEngineer:
                     self.logger.info(f"  - {category}: {len(cols)} признаков")
         
         return result_df
+    
+    def _get_numeric_features_for_normalization(self, df: pd.DataFrame) -> list:
+        """
+        Определение числовых признаков для нормализации
+        
+        Returns:
+            Список колонок для нормализации
+        """
+        # Исключаем системные колонки
+        exclude_columns = {
+            'datetime', 'symbol', 'timestamp', 
+            'open', 'high', 'low', 'close', 'volume',  # Оставляем сырые OHLCV как есть
+            'symbol_id', 'symbol_index'  # Исключаем категориальные идентификаторы символов
+        }
+        
+        # Исключаем признаки с ограниченным диапазоном (не нужна нормализация)
+        bounded_features = {
+            col for col in df.columns 
+            if any(indicator in col.lower() for indicator in [
+                'rsi', 'stoch_k', 'stoch_d', 'adx', 'cci', 'willr',
+                'mfi', 'tsi', 'ultimate', 'stochrsi'
+            ])
+        }
+        
+        # Исключаем бинарные признаки (0/1)
+        binary_features = {
+            col for col in df.columns
+            if any(pattern in col.lower() for pattern in [
+                'is_', 'has_', 'above_', 'below_', 'cross_', 'session_',
+                'pattern_', 'signal_', 'breakout_', 'support_', 'resistance_'
+            ])
+        }
+        
+        # КРИТИЧНО: Исключаем целевые переменные из нормализации!
+        # Они не должны обрезаться на ±5
+        target_features = {
+            col for col in df.columns
+            if any(pattern in col.lower() for pattern in [
+                'future_return', 'direction_', 'will_reach', 'max_drawdown', 'max_rally',
+                'expected_value', 'optimal_', 'best_', 'target_'
+            ])
+        }
+        
+        # Выбираем только числовые колонки
+        numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # Исключаем ненужные колонки
+        columns_to_normalize = [
+            col for col in numeric_columns
+            if col not in exclude_columns 
+            and col not in bounded_features
+            and col not in binary_features
+            and col not in target_features  # КРИТИЧНО: исключаем целевые!
+        ]
+        
+        self.logger.info(f"📊 Для нормализации выбрано {len(columns_to_normalize)} признаков")
+        self.logger.info(f"   - Исключено системных: {len(exclude_columns)}")
+        self.logger.info(f"   - Исключено ограниченных: {len(bounded_features)}")  
+        self.logger.info(f"   - Исключено бинарных: {len(binary_features)}")
+        self.logger.info(f"   - Исключено ЦЕЛЕВЫХ: {len(target_features)}")  # КРИТИЧНО!
+        
+        return columns_to_normalize
+    
+    def _validate_new_features(self, df: pd.DataFrame, original_columns: set) -> Dict:
+        """
+        Валидация новых признаков на предмет утечек данных
+        
+        Args:
+            df: DataFrame с новыми признаками
+            original_columns: Исходные колонки до добавления новых
+            
+        Returns:
+            Словарь с результатами валидации
+        """
+        new_columns = set(df.columns) - original_columns
+        validation_results = {
+            'total_new_features': len(new_columns),
+            'temporal_features': [],
+            'market_context_features': [],
+            'risky_features': [],
+            'safe_features': [],
+            'warnings': []
+        }
+        
+        # Категоризация новых признаков
+        for col in new_columns:
+            col_lower = col.lower()
+            
+            # ЦЕЛЕВЫЕ ПЕРЕМЕННЫЕ (всегда безопасны, т.к. это то что мы предсказываем)
+            if any(pattern in col_lower for pattern in [
+                'future_return', 'direction_', 'will_reach', 'max_drawdown', 'max_rally',
+                'signal_strength', 'best_action', 'risk_reward', 
+                '_expected_value', '_tp', '_sl_', 'optimal_entry', 'holding_cost'
+            ]):
+                validation_results['safe_features'].append(col)
+                continue
+            
+            # Временные признаки (безопасные)
+            if any(pattern in col_lower for pattern in [
+                'hour', 'minute', 'dayofweek', 'is_weekend',
+                'session', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
+                'day', 'month', 'tmp_'  # временные окна торговли
+            ]):
+                validation_results['temporal_features'].append(col)
+                
+                # ВАЖНО: month_sin и month_cos НЕ являются утечкой!
+                # Они используют только текущий месяц из datetime
+                if col in ['month_sin', 'month_cos']:
+                    validation_results['safe_features'].append(col)
+                    validation_results['warnings'].append(
+                        f"✅ {col} - безопасный признак (использует только текущий месяц)"
+                    )
+                else:
+                    validation_results['safe_features'].append(col)
+                continue
+            
+            # Технические индикаторы (всегда безопасны)
+            if any(pattern in col_lower for pattern in [
+                'ema', 'sma', 'rsi', 'macd', 'atr', 'bb_', 'bollinger',
+                'stoch', 'adx', 'momentum', 'obv', 'cmf', 'mfi',
+                'cci', 'williams', 'trix', 'roc', 'aroon',
+                'ichimoku', 'psar', 'donchian', 'keltner', 'vwap', 'vwma',
+                'pivot', 'resistance', 'support', 'fractal', 'hurst',
+                'efficiency', 'ultimate'
+            ]):
+                validation_results['safe_features'].append(col)
+                continue
+                
+            # Микроструктура рынка и объемные метрики (безопасны)
+            if any(pattern in col_lower for pattern in [
+                'hl_spread', 'price_direction', 'directed_volume', 'volume_imbalance',
+                'price_impact', 'toxicity', 'amihud', 'kyle', 'vpin',
+                'dollar_volume', 'turnover', 'liquidity', 'jump', 'cascade',
+                'realized_vol', 'garch', 'var_', 'cvar', 'funding',
+                # Дополнительные объемные признаки (все основаны на исторических данных)
+                'volume_cumsum', 'volume_ratio', 'volume_spike', 'volume_zscore',
+                'volume_volatility', 'accumulation_distribution', 'volatility_volume',
+                'return_entropy', 'daily_range', 'position_in_daily_range'
+            ]):
+                validation_results['safe_features'].append(col)
+                continue
+                
+            # Признаки уровней и расстояний (безопасны)
+            if any(pattern in col_lower for pattern in [
+                'distance_from', 'local_high', 'local_low', 'daily_high', 'daily_low',
+                'position_in_range', 'near_daily', 'dist_to', 'liquidation',
+                'leverage', 'position_size', 'close_position'
+            ]):
+                validation_results['safe_features'].append(col)
+                continue
+                
+            # Структура рынка и тренды (безопасны) 
+            if any(pattern in col_lower for pattern in [
+                'trend', 'uptrend', 'downtrend', 'breakout', 'spring',
+                'divergence', 'cross', 'above', 'below', 'volatility_squeeze',
+                'vol_regime', 'indicators_', 'returns', 'close_open', 'high_low',
+                'close_vw', 'price_vs', 'cloud'
+            ]):
+                validation_results['safe_features'].append(col)
+                continue
+                
+            # Символы и метаданные (безопасны)
+            if any(pattern in col_lower for pattern in [
+                'symbol_', 'sector', 'market_cap', 'liquidity_rank', 
+                'news_risk', 'power_hour'
+            ]):
+                validation_results['safe_features'].append(col)
+                continue
+            
+            # Контекстные признаки рынка
+            elif any(pattern in col_lower for pattern in [
+                'fear_greed', 'market_regime', 'bull_bear', 'volatility_regime',
+                'breadth_', 'correlation_'
+            ]):
+                validation_results['market_context_features'].append(col)
+                validation_results['safe_features'].append(col)
+                continue
+            
+            # Если не подошло ни под одну категорию
+            else:
+                # Неопознанные признаки требуют проверки
+                validation_results['warnings'].append(
+                    f"❓ НЕОПОЗНАННЫЙ: {col} - требует ручной проверки"
+                )
+        
+        # Проверка на NaN и бесконечности в новых признаках
+        for col in new_columns:
+            if col in df.columns:
+                series = df[col]
+                nan_count = series.isna().sum()
+                # Безопасная проверка бесконечностей только для числовых типов
+                try:
+                    import pandas as _pd
+                    from pandas.api import types as _types
+                except Exception:
+                    _types = None
+                if _types is not None and _types.is_numeric_dtype(series):
+                    inf_count = np.isinf(series.to_numpy()).sum()
+                else:
+                    inf_count = 0
+                
+                if nan_count > len(df) * 0.1:  # Более 10% NaN
+                    validation_results['warnings'].append(
+                        f"⚠️ МНОГО NaN: {col} ({nan_count}/{len(df)} = {nan_count/len(df):.1%})"
+                    )
+                
+                if inf_count > 0:
+                    validation_results['warnings'].append(
+                        f"❌ БЕСКОНЕЧНОСТИ: {col} ({inf_count} значений)"
+                    )
+        
+        # Логируем результаты валидации
+        self.logger.info(f"🔍 Валидация новых признаков:")
+        self.logger.info(f"   - Всего добавлено: {validation_results['total_new_features']}")
+        self.logger.info(f"   - Временных: {len(validation_results['temporal_features'])}")
+        self.logger.info(f"   - Контекстных: {len(validation_results['market_context_features'])}")
+        self.logger.info(f"   - Безопасных: {len(validation_results['safe_features'])}")
+        
+        if validation_results['risky_features']:
+            self.logger.warning(f"⚠️ РИСКОВАННЫХ: {len(validation_results['risky_features'])}")
+            for feature in validation_results['risky_features']:
+                self.logger.warning(f"     - {feature}")
+        
+        if validation_results['warnings']:
+            self.logger.warning(f"⚠️ Предупреждения ({len(validation_results['warnings'])}):")
+            for warning in validation_results['warnings']:
+                self.logger.warning(f"     {warning}")
+        
+        return validation_results
+""

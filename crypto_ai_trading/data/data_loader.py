@@ -187,8 +187,9 @@ class CryptoDataLoader:
     def load_data(self, 
                   symbols: Optional[List[str]] = None,
                   start_date: Optional[str] = None,
-                  end_date: Optional[str] = None) -> pd.DataFrame:
-        """ИСПРАВЛЕННАЯ загрузка данных с поддержкой symbols: all"""
+                  end_date: Optional[str] = None,
+                  interval_minutes: Optional[float] = None) -> pd.DataFrame:
+        """ИСПРАВЛЕННАЯ загрузка данных с поддержкой symbols: all и различных интервалов"""
         
         # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильная обработка symbols
         if symbols is None:
@@ -206,6 +207,29 @@ class CryptoDataLoader:
         start_date = start_date or self.config['data']['start_date']
         end_date = end_date or self.config['data']['end_date']
         
+        # Определяем интервал (по умолчанию из конфига)
+        if interval_minutes is None:
+            interval_minutes = self.config['data'].get('interval_minutes', 15)
+        
+        self.logger.info(f"📊 Загрузка данных с интервалом {interval_minutes} минут")
+
+        # Поддержка динамических границ дат: 'earliest'/'min' и 'latest'/'max'
+        try:
+            if isinstance(end_date, str) and end_date.strip().lower() in {"latest", "max", "now", "today"}:
+                with self.engine.connect() as conn:
+                    end_row = conn.execute(text(f"SELECT MAX(datetime) FROM raw_market_data WHERE market_type IN ('futures', 'spot') AND interval_minutes={interval_minutes}")).fetchone()
+                    if end_row and end_row[0] is not None:
+                        end_date = str(end_row[0])
+                        self.logger.info(f"⏱️ end_date=latest → используем MAX(datetime) из БД: {end_date}")
+            if isinstance(start_date, str) and start_date.strip().lower() in {"earliest", "min"}:
+                with self.engine.connect() as conn:
+                    start_row = conn.execute(text(f"SELECT MIN(datetime) FROM raw_market_data WHERE market_type IN ('futures', 'spot') AND interval_minutes={interval_minutes}")).fetchone()
+                    if start_row and start_row[0] is not None:
+                        start_date = str(start_row[0])
+                        self.logger.info(f"⏱️ start_date=earliest → используем MIN(datetime) из БД: {start_date}")
+        except Exception as e_bounds:
+            self.logger.warning(f"⚠️ Не удалось определить динамические границы дат: {e_bounds}")
+        
         # Валидация параметров
         self._validate_symbols(symbols)
         self._validate_dates(start_date, end_date)
@@ -214,11 +238,44 @@ class CryptoDataLoader:
         cached_data = self._load_from_cache(cache_key)
         if cached_data is not None:
             return cached_data
-        
+
         self.logger.start_stage("data_loading", symbols_count=len(symbols))
-        
+
         try:
-            # SQL запрос для SQLAlchemy
+            # Диагностика: поэтапные подсчёты записей под фильтрами
+            try:
+                with self.engine.connect() as conn:
+                    total_all = conn.execute(text("SELECT COUNT(*) FROM raw_market_data")).scalar() or 0
+                    total_interval = conn.execute(text(
+                        """
+                        SELECT COUNT(*) FROM raw_market_data
+                        WHERE market_type IN ('futures', 'spot') AND interval_minutes = :interval
+                        """
+                    ), {"interval": interval_minutes}).scalar() or 0
+                    total_date = conn.execute(text(
+                        """
+                        SELECT COUNT(*) FROM raw_market_data
+                        WHERE market_type IN ('futures', 'spot') AND interval_minutes = :interval
+                          AND datetime >= :start_date AND datetime <= :end_date
+                        """
+                    ), {"start_date": start_date, "end_date": end_date, "interval": interval_minutes}).scalar() or 0
+                    total_symbols = conn.execute(text(
+                        """
+                        SELECT COUNT(*) FROM raw_market_data
+                        WHERE market_type IN ('futures', 'spot') AND interval_minutes = :interval
+                          AND datetime >= :start_date AND datetime <= :end_date
+                          AND symbol = ANY(:symbols)
+                        """
+                    ), {"start_date": start_date, "end_date": end_date, "symbols": symbols, "interval": interval_minutes}).scalar() or 0
+                self.logger.info("📏 Диагностика фильтров загрузки:")
+                self.logger.info(f"   - Всего в таблице: {total_all:,}")
+                self.logger.info(f"   - Интервал {interval_minutes} мин: {total_interval:,}")
+                self.logger.info(f"   - С учётом дат [{start_date}..{end_date}]: {total_date:,}")
+                self.logger.info(f"   - С учётом символов ({len(symbols)} шт.): {total_symbols:,}")
+            except Exception as e_diag:
+                self.logger.warning(f"⚠️ Не удалось выполнить диагностику фильтров: {e_diag}")
+
+            # SQL запрос для SQLAlchemy (поддерживает разные интервалы и типы рынка)
             query = text("""
             SELECT 
                 id,
@@ -236,8 +293,8 @@ class CryptoDataLoader:
                 symbol = ANY(:symbols)
                 AND datetime >= :start_date
                 AND datetime <= :end_date
-                AND market_type = 'futures'
-                AND interval_minutes = 15
+                AND market_type IN ('futures', 'spot')
+                AND interval_minutes = :interval_minutes
             ORDER BY symbol, datetime
             """)
             
@@ -255,18 +312,39 @@ class CryptoDataLoader:
                     symbol = ANY(:symbols)
                     AND datetime >= :start_date
                     AND datetime <= :end_date
-                    AND market_type = 'futures'
-                    AND interval_minutes = 15
+                    AND market_type IN ('futures', 'spot')
+                    AND interval_minutes = :interval_minutes
                 """)
-                
+
                 result = conn.execute(count_query, {
                     'symbols': symbols,
                     'start_date': start_date,
-                    'end_date': end_date
+                    'end_date': end_date,
+                    'interval_minutes': interval_minutes
                 })
                 total_records = result.scalar()
-                
-                self.logger.info(f"Загрузка {total_records:,} записей...")
+
+                self.logger.info(f"Загрузка {total_records:,} записей (после всех фильтров)...")
+
+                # Диагностика распределения по символам (топ-5)
+                try:
+                    per_symbol = conn.execute(text(
+                        """
+                        SELECT symbol, COUNT(*) cnt
+                        FROM raw_market_data
+                        WHERE market_type IN ('futures', 'spot') AND interval_minutes = :interval_minutes
+                          AND datetime >= :start_date AND datetime <= :end_date
+                          AND symbol = ANY(:symbols)
+                        GROUP BY symbol
+                        ORDER BY cnt DESC
+                        LIMIT 5
+                        """
+                    ), {"start_date": start_date, "end_date": end_date, "symbols": symbols, "interval_minutes": interval_minutes}).fetchall()
+                    if per_symbol:
+                        top = ", ".join([f"{row.symbol}:{row.cnt:,}" for row in per_symbol])
+                        self.logger.info(f"   - Топ-5 по символам: {top}")
+                except Exception as e_sym:
+                    self.logger.warning(f"⚠️ Диагностика по символам недоступна: {e_sym}")
                 
                 # Загрузка данных через pandas
                 with tqdm(total=total_records, desc="Загрузка данных") as pbar:
@@ -276,7 +354,8 @@ class CryptoDataLoader:
                         params={
                             "symbols": symbols,
                             "start_date": start_date,
-                            "end_date": end_date
+                            "end_date": end_date,
+                            "interval_minutes": interval_minutes
                         },
                         chunksize=chunk_size
                     ):

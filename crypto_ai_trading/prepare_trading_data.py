@@ -49,9 +49,10 @@ def check_database_connection(config: dict, logger):
         return False, None
 
 
-def process_symbol_features(symbol: str, symbol_data: pd.DataFrame, config: dict, 
-                           logger_name: str, use_cache: bool = True, 
-                           position: int = None, disable_progress: bool = False) -> pd.DataFrame:
+def process_symbol_features(symbol: str, symbol_data: pd.DataFrame, config: dict,
+                           logger_name: str, use_cache: bool = True,
+                           position: int = None, disable_progress: bool = False,
+                           raise_on_error: bool = False) -> pd.DataFrame:
     """Обработка признаков для одного символа (для параллельной обработки)"""
     logger = get_logger(f"{logger_name}_{symbol}", is_subprocess=True)
     
@@ -104,16 +105,22 @@ def process_symbol_features(symbol: str, symbol_data: pd.DataFrame, config: dict
         gc.collect()
         
         return symbol_data
-        
+    
     except Exception as e:
         logger.error(f"❌ Ошибка при обработке {symbol}: {e}")
         import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        tb = traceback.format_exc()
+        logger.error(f"Traceback: {tb}")
         # Сохраняем подробную информацию об ошибке
-        with open(f'/tmp/{symbol}_error.log', 'w') as f:
-            f.write(f"Error processing {symbol}:\n")
-            f.write(f"Error: {str(e)}\n\n")
-            f.write(f"Traceback:\n{traceback.format_exc()}\n")
+        try:
+            with open(f'/tmp/{symbol}_error.log', 'w') as f:
+                f.write(f"Error processing {symbol}:\n")
+                f.write(f"Error: {str(e)}\n\n")
+                f.write(f"Traceback:\n{tb}\n")
+        except Exception:
+            pass
+        if raise_on_error:
+            raise
         return pd.DataFrame()
 
 
@@ -141,7 +148,10 @@ def optimize_memory_usage(df: pd.DataFrame, logger) -> pd.DataFrame:
     return df
 
 
-def prepare_features_for_trading(config: dict, logger, force_recreate: bool = False):
+def prepare_features_for_trading(config: dict, logger, force_recreate: bool = False,
+                                 workers: int | None = None,
+                                 sequential: bool = False,
+                                 no_cache: bool = False):
     """Подготовка признаков для торговой модели"""
     
     logger.info("\n" + "="*80)
@@ -196,7 +206,9 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
     
     # Простой расчет количества процессов
     cpu_count = mp.cpu_count()
-    n_processes = min(cpu_count - 1, 8)
+    n_processes = 1 if sequential else min(cpu_count - 1, 8)
+    if workers is not None:
+        n_processes = max(1, int(workers))
     logger.info(f"⚡ Используем {n_processes} процессов")
     
     # Группируем данные по символам
@@ -216,7 +228,8 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
         process_func = partial(process_symbol_features, 
                               config=config, 
                               logger_name="FeatureEngineering",
-                              use_cache=not force_recreate)  # Отключаем кеш при force_recreate
+                              use_cache=not (force_recreate or no_cache),
+                              raise_on_error=sequential or (workers == 1))  # В отладочном режиме пробрасываем исключения
         
         # Создаем задачи для каждого символа
         future_to_symbol = {}
@@ -250,6 +263,38 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
     
     # Объединяем результаты
     logger.info("\n📊 Объединение результатов...")
+    if not featured_dfs:
+        logger.warning("⚠️ Параллельная обработка вернула пустой результат. Пытаемся обработать последовательно...")
+        featured_dfs = []
+        for symbol in symbols:
+            try:
+                result = process_symbol_features(
+                    symbol,
+                    raw_data[raw_data['symbol'] == symbol].copy(),
+                    config=config,
+                    logger_name="FeatureEngineeringFallback",
+                    use_cache=not (force_recreate or no_cache),
+                    position=0,
+                    disable_progress=True,
+                    raise_on_error=True
+                )
+                if not result.empty:
+                    featured_dfs.append(result)
+                    logger.info(f"✅ {symbol}: обработано {len(result)} записей (fallback)")
+            except Exception as e:
+                logger.error(f"❌ Ошибка при последовательной обработке {symbol}: {e}")
+        # Подсказка: где искать причины
+        try:
+            import glob
+            err_logs = glob.glob('/tmp/*_error.log')
+            if err_logs:
+                logger.warning(f"⚠️ Найдены логи ошибок subprocess: {err_logs[:5]} ...")
+        except Exception:
+            pass
+
+        if not featured_dfs:
+            raise RuntimeError("Пустой результат feature engineering: ни один символ не был обработан. Проверьте логи /tmp/*_error.log")
+    
     processed_data = pd.concat(featured_dfs, ignore_index=True)
     
     # ИСПРАВЛЕНО: Удаляем дубликаты после параллельной обработки
@@ -272,6 +317,18 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
     
     logger.info("🔄 Создание cross-asset признаков...")
     processed_data = feature_engineer._create_cross_asset_features(processed_data)
+
+    # Пост-проверка наличия ключевых целевых колонок
+    required_targets = [
+        'future_return_15m','future_return_1h','future_return_4h','future_return_12h',
+        'direction_15m','direction_1h','direction_4h','direction_12h',
+        'long_will_reach_1pct_4h','long_will_reach_2pct_4h','long_will_reach_3pct_12h','long_will_reach_5pct_12h',
+        'short_will_reach_1pct_4h','short_will_reach_2pct_4h','short_will_reach_3pct_12h','short_will_reach_5pct_12h',
+        'max_drawdown_1h','max_rally_1h','max_drawdown_4h','max_rally_4h'
+    ]
+    missing = [c for c in required_targets if c not in processed_data.columns]
+    if missing:
+        logger.warning(f"⚠️ Отсутствуют ожидаемые целевые колонки: {missing}")
     
     # Разделение на train/val/test с временным gap
     logger.info("📊 Разделение на выборки с временным gap...")
@@ -347,6 +404,32 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
     # Удалено: 'best_action', 'risk_reward', 'optimal_hold' - больше не целевые
     # signal_strength теперь признак (не целевая)
     
+    # Определяем целевые колонки
+    target_cols = [col for col in train_data.columns if col.startswith((
+        'future_return_',      # 4 переменные: 15m, 1h, 4h, 12h
+        'direction_',          # 4 переменные: направления
+        'long_will_reach_',    # 4 переменные: достижение целей LONG
+        'short_will_reach_',   # 4 переменные: достижение целей SHORT
+        'max_drawdown_',       # 2 переменные: 1h, 4h
+        'max_rally_'           # 2 переменные: 1h, 4h
+    ))]
+    
+    # Сохраняем списки колонок в текстовые файлы для staged training
+    feature_cols_path = data_dir / "feature_cols.txt"
+    target_cols_path = data_dir / "target_cols.txt"
+    
+    with open(feature_cols_path, 'w') as f:
+        for col in feature_cols:
+            f.write(f"{col}\n")
+    
+    with open(target_cols_path, 'w') as f:
+        for col in target_cols:
+            f.write(f"{col}\n")
+    
+    logger.info(f"✅ Сохранены списки колонок:")
+    logger.info(f"   - Признаки ({len(feature_cols)}): {feature_cols_path}")
+    logger.info(f"   - Целевые ({len(target_cols)}): {target_cols_path}")
+    
     # Более точная проверка на подозрительные колонки
     # optimal_leverage и safe_leverage - это рекомендации на основе исторической волатильности, не утечка
     suspicious_cols = [col for col in feature_cols 
@@ -363,6 +446,8 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
         'val_data': val_data,
         'test_data': test_data,
         'feature_count': len(train_data.columns),
+        'feature_cols': feature_cols,
+        'target_cols': target_cols,
         'symbols': symbols_to_load
     }
 
@@ -378,6 +463,12 @@ def main():
                        help='Принудительно пересоздать кэш (игнорировать существующий)')
     parser.add_argument('--analyze-only', action='store_true',
                        help='Только анализ без сохранения')
+    parser.add_argument('--workers', type=int, default=None,
+                       help='Число воркеров для параллельной обработки (по умолчанию auto)')
+    parser.add_argument('--sequential', action='store_true',
+                       help='Последовательная обработка без multiprocessing (отладка)')
+    parser.add_argument('--no-cache', action='store_true',
+                       help='Игнорировать feature cache и пересчитывать признаки')
     
     args = parser.parse_args()
     
@@ -393,7 +484,13 @@ def main():
         logger.info("🧪 ТЕСТОВЫЙ РЕЖИМ: используются только 3 монеты")
     
     # Подготавливаем данные
-    result = prepare_features_for_trading(config, logger, force_recreate=args.force_recreate)
+    result = prepare_features_for_trading(
+        config, logger,
+        force_recreate=args.force_recreate,
+        workers=args.workers,
+        sequential=args.sequential,
+        no_cache=args.no_cache
+    )
     
     if result and not args.analyze_only:
         logger.info("\n" + "="*80)

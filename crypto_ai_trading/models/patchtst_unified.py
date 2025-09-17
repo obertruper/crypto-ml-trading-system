@@ -7,14 +7,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import math
 
-from models.patchtst import (
-    PositionalEncoding,
-    PatchEmbedding,
-    EINOPS_AVAILABLE
-)
+# Импортируем из components.py вместо несуществующего patchtst.py
+from .components import PositionalEncoding
+# PatchEmbedding не найден, определим локально
+EINOPS_AVAILABLE = False
 
 
 class RevIN(nn.Module):
@@ -234,13 +233,28 @@ class UnifiedPatchTSTForTrading(nn.Module):
             nn.Tanh()  # Ограничиваем выходы для стабильности
         )
         
-        # 2. Направления движения (классификация 3 класса) - 4 выхода [4-7]
-        # Каждый выход - логиты для 3 классов [UP=0, DOWN=1, FLAT=2]
+        # 2. Направления движения - УСИЛЕННАЯ АРХИТЕКТУРА ПРОТИВ КОЛЛАПСА
+        # Отдельные головы для каждого таймфрейма для независимого обучения
+        self.direction_heads = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(self.d_model, self.d_model),  # Больше capacity
+                nn.LayerNorm(self.d_model),  # Нормализация для стабильности
+                nn.GELU(),  # GELU для лучших градиентов
+                nn.Dropout(self.dropout * 0.5),  # Меньше dropout
+                nn.Linear(self.d_model, self.d_model // 2),
+                nn.LayerNorm(self.d_model // 2),
+                nn.GELU(),
+                nn.Dropout(self.dropout * 0.5),
+                nn.Linear(self.d_model // 2, 3)  # 3 класса: LONG, SHORT, FLAT
+            ) for _ in range(4)  # 15m, 1h, 4h, 12h
+        ])
+
+        # Резервная голова для совместимости
         self.direction_head = nn.Sequential(
             nn.Linear(self.d_model, self.d_model // 2),
             nn.ReLU(),
             nn.Dropout(self.dropout),
-            nn.Linear(self.d_model // 2, 4 * 3)  # 4 таймфрейма x 3 класса = 12 логитов
+            nn.Linear(self.d_model // 2, 4 * 3)
         )
         
         # 3. Достижение уровней LONG (бинарная классификация) - 4 выхода [8-11]
@@ -351,13 +365,14 @@ class UnifiedPatchTSTForTrading(nn.Module):
                 with torch.no_grad():
                     module.weight.mul_(0.7)
                 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_dict: bool = False) -> torch.Tensor:
         """
         Forward pass
-        
+
         Args:
             x: (batch_size, seq_len, n_features)
-            
+            return_dict: игнорируется, для совместимости с trainer
+
         Returns:
             output: (batch_size, n_outputs) - все целевые переменные
         """
@@ -391,8 +406,18 @@ class UnifiedPatchTSTForTrading(nn.Module):
         # Многозадачные предсказания v4.0 (20 выходов)
         future_returns = self.future_returns_head(x_projected)  # (B, 4)
         
-        # Direction head выдает логиты для 3 классов на каждый таймфрейм
-        direction_logits = self.direction_head(x_projected)  # (B, 12) = 4 таймфрейма * 3 класса
+        # Direction head - используем новые отдельные головы если они есть
+        if hasattr(self, 'direction_heads') and len(self.direction_heads) > 0:
+            # Используем отдельные головы для каждого таймфрейма
+            direction_outputs = []
+            for i, head in enumerate(self.direction_heads):
+                logits = head(x_projected)  # (B, 3)
+                direction_outputs.append(logits)
+            # Объединяем в один тензор
+            direction_logits = torch.cat(direction_outputs, dim=1)  # (B, 12)
+        else:
+            # Fallback на старую голову
+            direction_logits = self.direction_head(x_projected)  # (B, 12) = 4 таймфрейма * 3 класса
         
         # ОТЛАДКА: Проверяем выходы direction head
         if not hasattr(self, '_logged_direction_head') and self.training:
@@ -424,7 +449,18 @@ class UnifiedPatchTSTForTrading(nn.Module):
         
         # Преобразуем логиты в классы для совместимости со старым форматом
         direction_logits_reshaped = direction_logits.view(batch_size, 4, 3)  # (B, 4, 3)
-        
+
+        # КРИТИЧЕСКИ ВАЖНО: Применяем direction_bias если есть в конфиге
+        direction_bias = self.config.get('model', {}).get('direction_bias', None)
+        if direction_bias is not None and len(direction_bias) == 3:
+            bias_tensor = torch.tensor(direction_bias, device=direction_logits_reshaped.device, dtype=direction_logits_reshaped.dtype)
+            direction_logits_reshaped = direction_logits_reshaped + bias_tensor.view(1, 1, 3)  # Broadcast across batch and timeframes
+
+            # Логирование bias (только один раз)
+            if not hasattr(self, '_bias_logged'):
+                self._bias_logged = True
+                self.logger.info(f"🎯 Direction bias применён: {direction_bias}")
+
         # Применяем temperature scaling если включено
         if self.temperature is not None:
             # Temperature scaling делает предсказания более сбалансированными (Т > 1)
@@ -441,24 +477,27 @@ class UnifiedPatchTSTForTrading(nn.Module):
         # Получаем предсказанные классы
         directions = torch.argmax(direction_probs, dim=-1).float()  # (B, 4)
         
-        # КРИТИЧНО: Применяем порог уверенности ВСЕГДА для консистентности
-        # между обучением и валидацией
+        # ВАЖНО: НЕ применяем порог уверенности при обучении!
+        # Это критическая ошибка, которая убивает градиенты и не дает модели учиться
+        # Порог уверенности должен применяться ТОЛЬКО при инференсе/торговле
+
         # Получаем максимальные вероятности для каждого предсказания
         max_probs, _ = torch.max(direction_probs, dim=-1)  # (B, 4)
-        
-        # Если максимальная вероятность ниже порога, предсказываем FLAT
-        confidence_threshold = self.config.get('model', {}).get('direction_confidence_threshold', 0.5)
-        low_confidence_mask = max_probs < confidence_threshold
-        
-        # Применяем маску только если есть хоть одно неуверенное предсказание
-        if low_confidence_mask.any():
-            directions[low_confidence_mask] = 2.0  # FLAT = 2
-            
-            # Логирование для отладки (только в первый раз)
-            if not hasattr(self, '_confidence_logged'):
-                self._confidence_logged = True
-                n_low_confidence = low_confidence_mask.sum().item()
-                self.logger.info(f"🎯 Порог уверенности {confidence_threshold}: {n_low_confidence} предсказаний изменены на FLAT")
+
+        # Применяем порог ТОЛЬКО в режиме eval (не при обучении)
+        if not self.training:
+            confidence_threshold = self.config.get('model', {}).get('direction_confidence_threshold', 0.5)
+            low_confidence_mask = max_probs < confidence_threshold
+
+            # Применяем маску только если есть хоть одно неуверенное предсказание
+            if low_confidence_mask.any():
+                directions[low_confidence_mask] = 2.0  # FLAT = 2
+
+                # Логирование для отладки (только в первый раз)
+                if not hasattr(self, '_confidence_logged'):
+                    self._confidence_logged = True
+                    n_low_confidence = low_confidence_mask.sum().item()
+                    self.logger.info(f"🎯 [EVAL MODE] Порог уверенности {confidence_threshold}: {n_low_confidence} предсказаний изменены на FLAT")
         
         # Предсказываем уверенность для каждого таймфрейма
         confidence_scores = self.confidence_head(x_projected)  # (B, 4)
@@ -525,265 +564,267 @@ class UnifiedPatchTSTForTrading(nn.Module):
         ]
 
 
-class UnifiedTradingLoss(nn.Module):
-    """
-    Унифицированная loss функция для 20 выходов v4.0
-    Комбинирует regression и classification losses с weighted focus на крупные движения
-    """
-    
-    def __init__(self, config: Dict):
-        super().__init__()
-        self.config = config
-        loss_config = config.get('loss', {})
-        
+# НЕИСПОЛЬЗУЕМЫЙ КЛАСС UnifiedTradingLoss ЗАКОММЕНТИРОВАН
+# class UnifiedTradingLoss(nn.Module):
+#     """
+#     Унифицированная loss функция для 20 выходов v4.0
+#     Комбинирует regression и classification losses с weighted focus на крупные движения
+#     """
+#     
+#     def __init__(self, config: Dict):
+#         super().__init__()
+#         self.config = config
+#         loss_config = config.get('loss', {})
+#         
         # Веса для разных компонентов
-        self.future_return_weight = loss_config.get('future_return_weight', 1.0)
-        self.tp_weight = loss_config.get('tp_weight', 0.8)
-        self.sl_weight = loss_config.get('sl_weight', 1.2)
-        self.signal_weight = loss_config.get('signal_weight', 0.6)
-        
+#         self.future_return_weight = loss_config.get('future_return_weight', 1.0)
+#         self.tp_weight = loss_config.get('tp_weight', 0.8)
+#         self.sl_weight = loss_config.get('sl_weight', 1.2)
+#         self.signal_weight = loss_config.get('signal_weight', 0.6)
+#         
         # Веса для крупных движений
-        self.large_move_threshold = loss_config.get('large_move_threshold', 0.02)  # 2%
-        self.large_move_weight = loss_config.get('large_move_weight', 5.0)
-        
+#         self.large_move_threshold = loss_config.get('large_move_threshold', 0.02)  # 2%
+#         self.large_move_weight = loss_config.get('large_move_weight', 5.0)
+#         
         # Штраф за неправильное направление
-        self.wrong_direction_penalty = loss_config.get('wrong_direction_penalty', 2.0)
-        
+#         self.wrong_direction_penalty = loss_config.get('wrong_direction_penalty', 2.0)
+#         
         # Loss функции (исправлено для mixed precision)
-        self.mse_loss = nn.MSELoss(reduction='none')
-        self.bce_with_logits_loss = nn.BCEWithLogitsLoss(reduction='none')  # Безопасно для autocast
-        
-    def forward(self, predictions: torch.Tensor, targets: torch.Tensor, 
-                price_changes: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        Вычисление loss для v4.0 с weighted focus на крупные движения
-        
-        Args:
-            predictions: (batch_size, 20)
-            targets: (batch_size, 20)
-            price_changes: (batch_size, 4) - опциональные изменения цен для взвешивания
-            
-        Returns:
-            loss: скаляр
-        """
-        assert predictions.shape == targets.shape, \
-            f"Shape mismatch: predictions {predictions.shape} vs targets {targets.shape}"
-        
-        batch_size = predictions.shape[0]
-        losses = []
-        
+#         self.mse_loss = nn.MSELoss(reduction='none')
+#         self.bce_with_logits_loss = nn.BCEWithLogitsLoss(reduction='none')  # Безопасно для autocast
+#         
+#     def forward(self, predictions: torch.Tensor, targets: torch.Tensor, 
+#                 price_changes: Optional[torch.Tensor] = None) -> torch.Tensor:
+#         """
+#         Вычисление loss для v4.0 с weighted focus на крупные движения
+#         
+#         Args:
+#             predictions: (batch_size, 20)
+#             targets: (batch_size, 20)
+#             price_changes: (batch_size, 4) - опциональные изменения цен для взвешивания
+#             
+#         Returns:
+#             loss: скаляр
+#         """
+#         assert predictions.shape == targets.shape, \
+#             f"Shape mismatch: predictions {predictions.shape} vs targets {targets.shape}"
+#         
+#         batch_size = predictions.shape[0]
+#         losses = []
+#         
         # ИСПРАВЛЕНИЕ для v4.0: Обработка 20 переменных
         # Нормализация целевых переменных где необходимо
-        normalized_targets = targets.clone()
-        
+#         normalized_targets = targets.clone()
+#         
         # 1. Future returns (индексы 0-3) - регрессия с weighted loss
         # Нормализация из процентов в доли
-        normalized_targets[:, :4] = targets[:, :4] / 100.0
-        
+#         normalized_targets[:, :4] = targets[:, :4] / 100.0
+#         
         # Базовый MSE loss
-        future_return_loss = self.mse_loss(
-            predictions[:, :4], 
-            normalized_targets[:, :4]
-        )
-        
+#         future_return_loss = self.mse_loss(
+#             predictions[:, :4], 
+#             normalized_targets[:, :4]
+#         )
+#         
         # Взвешивание для крупных движений
-        if price_changes is not None:
+#         if price_changes is not None:
             # price_changes уже в долях
-            large_move_mask = torch.abs(price_changes) > self.large_move_threshold
-            
+#             large_move_mask = torch.abs(price_changes) > self.large_move_threshold
+#             
             # Применяем больший вес к крупным движениям
-            weights = torch.ones_like(future_return_loss)
-            weights[large_move_mask] = self.large_move_weight
-            
+#             weights = torch.ones_like(future_return_loss)
+#             weights[large_move_mask] = self.large_move_weight
+#             
             # Взвешенный loss
-            future_return_loss = (future_return_loss * weights).mean()
-        else:
+#             future_return_loss = (future_return_loss * weights).mean()
+#         else:
             # Альтернативный подход - использовать сами целевые значения для взвешивания
-            weights = 1.0 + torch.abs(normalized_targets[:, :4]) * 10.0
-            future_return_loss = (future_return_loss * weights).mean()
-        
-        losses.append(future_return_loss * self.future_return_weight)
-        
+#             weights = 1.0 + torch.abs(normalized_targets[:, :4]) * 10.0
+#             future_return_loss = (future_return_loss * weights).mean()
+#         
+#         losses.append(future_return_loss * self.future_return_weight)
+#         
         # 2. Направления движения (индексы 4-7) - классификация с штрафом за неправильное направление
         # Получаем предсказанные и истинные направления
-        pred_directions = predictions[:, 4:8]
-        true_directions = targets[:, 4:8]
-        
+#         pred_directions = predictions[:, 4:8]
+#         true_directions = targets[:, 4:8]
+#         
         # Специальный loss для направлений
-        direction_losses = []
-        
-        for i in range(4):  # Для каждого таймфрейма
+#         direction_losses = []
+#         
+#         for i in range(4):  # Для каждого таймфрейма
             # Базовый MSE
-            base_loss = self.mse_loss(
-                pred_directions[:, i],
-                true_directions[:, i] / 2.0
-            )
-            
+#             base_loss = self.mse_loss(
+#                 pred_directions[:, i],
+#                 true_directions[:, i] / 2.0
+#             )
+#             
             # Дополнительный штраф за противоположное направление
             # Если истинное = 0 (UP), а предсказано = 1 (DOWN) или наоборот
-            pred_class = torch.round(pred_directions[:, i] * 2).clamp(0, 2)
-            true_class = true_directions[:, i]
-            
-            wrong_direction_mask = (
-                ((true_class == 0) & (pred_class == 1)) |  # True UP, Pred DOWN
-                ((true_class == 1) & (pred_class == 0))    # True DOWN, Pred UP
-            )
-            
+#             pred_class = torch.round(pred_directions[:, i] * 2).clamp(0, 2)
+#             true_class = true_directions[:, i]
+#             
+#             wrong_direction_mask = (
+#                 ((true_class == 0) & (pred_class == 1)) |  # True UP, Pred DOWN
+#                 ((true_class == 1) & (pred_class == 0))    # True DOWN, Pred UP
+#             )
+#             
             # Применяем штраф
-            penalty_weights = torch.ones_like(base_loss)
-            penalty_weights[wrong_direction_mask] = self.wrong_direction_penalty
-            
-            weighted_loss = (base_loss * penalty_weights).mean()
-            direction_losses.append(weighted_loss)
-        
-        direction_loss = sum(direction_losses) / len(direction_losses)
-        losses.append(direction_loss * self.signal_weight)
-        
+#             penalty_weights = torch.ones_like(base_loss)
+#             penalty_weights[wrong_direction_mask] = self.wrong_direction_penalty
+#             
+#             weighted_loss = (base_loss * penalty_weights).mean()
+#             direction_losses.append(weighted_loss)
+#         
+#         direction_loss = sum(direction_losses) / len(direction_losses)
+#         losses.append(direction_loss * self.signal_weight)
+#         
         # 3. Достижение уровней LONG (индексы 8-11) - бинарная классификация
-        long_levels_loss = self.bce_with_logits_loss(
-            predictions[:, 8:12],
-            targets[:, 8:12]
-        )
-        
+#         long_levels_loss = self.bce_with_logits_loss(
+#             predictions[:, 8:12],
+#             targets[:, 8:12]
+#         )
+#         
         # Взвешивание для положительных примеров (когда цель достигнута)
-        positive_weight = 2.0  # Больше веса на правильное предсказание достижения уровня
-        weights = torch.ones_like(long_levels_loss)
-        weights[targets[:, 8:12] == 1] = positive_weight
-        
-        long_levels_loss = (long_levels_loss * weights).mean()
-        losses.append(long_levels_loss * self.tp_weight)
-        
+#         positive_weight = 2.0  # Больше веса на правильное предсказание достижения уровня
+#         weights = torch.ones_like(long_levels_loss)
+#         weights[targets[:, 8:12] == 1] = positive_weight
+#         
+#         long_levels_loss = (long_levels_loss * weights).mean()
+#         losses.append(long_levels_loss * self.tp_weight)
+#         
         # 4. Достижение уровней SHORT (индексы 12-15) - бинарная классификация
-        short_levels_loss = self.bce_with_logits_loss(
-            predictions[:, 12:16],
-            targets[:, 12:16]
-        )
-        
+#         short_levels_loss = self.bce_with_logits_loss(
+#             predictions[:, 12:16],
+#             targets[:, 12:16]
+#         )
+#         
         # Аналогичное взвешивание
-        weights = torch.ones_like(short_levels_loss)
-        weights[targets[:, 12:16] == 1] = positive_weight
-        
-        short_levels_loss = (short_levels_loss * weights).mean()
-        losses.append(short_levels_loss * self.tp_weight)
-        
+#         weights = torch.ones_like(short_levels_loss)
+#         weights[targets[:, 12:16] == 1] = positive_weight
+#         
+#         short_levels_loss = (short_levels_loss * weights).mean()
+#         losses.append(short_levels_loss * self.tp_weight)
+#         
         # 5. Риск-метрики (индексы 16-19) - регрессия с фокусом на большие drawdowns
-        risk_metrics_loss = self.mse_loss(
-            predictions[:, 16:20],
-            targets[:, 16:20]  # Уже нормализованы в feature_engineering
-        )
-        
+#         risk_metrics_loss = self.mse_loss(
+#             predictions[:, 16:20],
+#             targets[:, 16:20]  # Уже нормализованы в feature_engineering
+#         )
+#         
         # Больше веса на правильное предсказание больших drawdowns
-        risk_weights = 1.0 + torch.abs(targets[:, 16:20]) * 5.0
-        risk_metrics_loss = (risk_metrics_loss * risk_weights).mean()
-        
-        losses.append(risk_metrics_loss * self.signal_weight)
-        
+#         risk_weights = 1.0 + torch.abs(targets[:, 16:20]) * 5.0
+#         risk_metrics_loss = (risk_metrics_loss * risk_weights).mean()
+#         
+#         losses.append(risk_metrics_loss * self.signal_weight)
+#         
         # Общий loss с адаптивным взвешиванием
         # Можно добавить динамическое изменение весов в процессе обучения
-        total_loss = sum(losses) / len(losses)
-        
+#         total_loss = sum(losses) / len(losses)
+#         
         # L2 регуляризация для предотвращения переобучения
-        l2_lambda = self.config.get('model', {}).get('l2_regularization', 0.001)
-        if l2_lambda > 0 and hasattr(self, 'model') and self.model is not None:
-            l2_reg = 0.0
-            for param in self.model.parameters():
-                if param.requires_grad:
-                    l2_reg += torch.norm(param, 2) ** 2
-            total_loss += l2_lambda * l2_reg
-        
-        return total_loss
+#         l2_lambda = self.config.get('model', {}).get('l2_regularization', 0.001)
+#         if l2_lambda > 0 and hasattr(self, 'model') and self.model is not None:
+#             l2_reg = 0.0
+#             for param in self.model.parameters():
+#                 if param.requires_grad:
+#                     l2_reg += torch.norm(param, 2) ** 2
+#             total_loss += l2_lambda * l2_reg
+#         
+#         return total_loss
+# 
 
-
-class DirectionalTradingLoss(nn.Module):
-    """
-    Специализированная loss функция для максимизации прибыльности
-    Учитывает потенциальный P&L от торговых решений
-    """
+# НЕИСПОЛЬЗУЕМЫЙ КЛАСС DirectionalTradingLoss ЗАКОММЕНТИРОВАН
+# class DirectionalTradingLoss(nn.Module):
+#     """
+#     Специализированная loss функция для максимизации прибыльности
+#     Учитывает потенциальный P&L от торговых решений
+#     """
     
-    def __init__(self, 
-                 commission: float = 0.001,
-                 class_weights: Optional[List[float]] = None,
-                 profit_focus_weight: float = 10.0):
-        super().__init__()
-        self.commission = commission
-        self.profit_focus_weight = profit_focus_weight
+#     def __init__(self, 
+#                  commission: float = 0.001,
+#                  class_weights: Optional[List[float]] = None,
+#                  profit_focus_weight: float = 10.0):
+#         super().__init__()
+#         self.commission = commission
+#         self.profit_focus_weight = profit_focus_weight
         
         # Веса классов (можно настроить для баланса)
-        if class_weights is None:
-            self.class_weights = torch.tensor([1.0, 1.0, 0.5])  # Меньше вес для FLAT
-        else:
-            self.class_weights = torch.tensor(class_weights)
+#         if class_weights is None:
+#             self.class_weights = torch.tensor([1.0, 1.0, 0.5])  # Меньше вес для FLAT
+#         else:
+#             self.class_weights = torch.tensor(class_weights)
             
-    def forward(self, 
-                predictions: Dict[str, torch.Tensor], 
-                targets: Dict[str, torch.Tensor],
-                price_changes: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        Вычисление loss с учетом потенциальной прибыли
+#     def forward(self, 
+#                 predictions: Dict[str, torch.Tensor], 
+#                 targets: Dict[str, torch.Tensor],
+#                 price_changes: Dict[str, torch.Tensor]) -> torch.Tensor:
+#         """
+#         Вычисление loss с учетом потенциальной прибыли
         
-        Args:
-            predictions: Dict с логитами для каждого таймфрейма
-            targets: Dict с истинными метками (0=UP, 1=DOWN, 2=FLAT)
-            price_changes: Dict с процентными изменениями цены
+#         Args:
+#             predictions: Dict с логитами для каждого таймфрейма
+#             targets: Dict с истинными метками (0=UP, 1=DOWN, 2=FLAT)
+#             price_changes: Dict с процентными изменениями цены
             
-        Returns:
-            Общий loss
-        """
-        total_loss = 0.0
-        timeframe_weights = {'15m': 0.2, '1h': 0.3, '4h': 0.35, '12h': 0.15}
+#         Returns:
+#             Общий loss
+#         """
+#         total_loss = 0.0
+#         timeframe_weights = {'15m': 0.2, '1h': 0.3, '4h': 0.35, '12h': 0.15}
         
-        for timeframe in ['15m', '1h', '4h', '12h']:
-            key = f'direction_{timeframe}'
+#         for timeframe in ['15m', '1h', '4h', '12h']:
+#             key = f'direction_{timeframe}'
             
             # Base cross entropy с весами классов
-            ce_loss = F.cross_entropy(
-                predictions[key], 
-                targets[key],
-                weight=self.class_weights.to(predictions[key].device),
-                reduction='none'
-            )
+#             ce_loss = F.cross_entropy(
+#                 predictions[key], 
+#                 targets[key],
+#                 weight=self.class_weights.to(predictions[key].device),
+#                 reduction='none'
+#             )
             
             # Рассчитываем потенциальный P&L
-            predicted_direction = predictions[key].argmax(dim=1)
-            actual_direction = targets[key]
-            price_change = price_changes[timeframe]
+#             predicted_direction = predictions[key].argmax(dim=1)
+#             actual_direction = targets[key]
+#             price_change = price_changes[timeframe]
             
             # Убеждаемся что price_change имеет правильную размерность
-            if price_change.dim() > 1:
-                price_change = price_change.squeeze(-1)
+#             if price_change.dim() > 1:
+#                 price_change = price_change.squeeze(-1)
             
             # Потенциальная прибыль/убыток от каждого решения
-            potential_pnl = torch.zeros_like(ce_loss)
+#             potential_pnl = torch.zeros_like(ce_loss)
             
             # LONG позиции (predicted=0)
-            long_mask = predicted_direction == 0
-            potential_pnl[long_mask] = price_change[long_mask] - self.commission
+#             long_mask = predicted_direction == 0
+#             potential_pnl[long_mask] = price_change[long_mask] - self.commission
             
             # SHORT позиции (predicted=1)
-            short_mask = predicted_direction == 1  
-            potential_pnl[short_mask] = -price_change[short_mask] - self.commission
+#             short_mask = predicted_direction == 1  
+#             potential_pnl[short_mask] = -price_change[short_mask] - self.commission
             
             # Веса на основе величины движения цены
             # Больше штраф за ошибки на крупных движениях
-            movement_weight = 1 + torch.abs(price_change) * self.profit_focus_weight
+#             movement_weight = 1 + torch.abs(price_change) * self.profit_focus_weight
             
             # Дополнительный штраф за неправильное направление
-            wrong_direction_mask = (
-                ((predicted_direction == 0) & (actual_direction == 1)) |  # Предсказали UP, было DOWN
-                ((predicted_direction == 1) & (actual_direction == 0))    # Предсказали DOWN, было UP
-            )
-            direction_penalty = wrong_direction_mask.float() * torch.abs(price_change) * 2
+#             wrong_direction_mask = (
+#                 ((predicted_direction == 0) & (actual_direction == 1)) |  # Предсказали UP, было DOWN
+#                 ((predicted_direction == 1) & (actual_direction == 0))    # Предсказали DOWN, было UP
+#             )
+#             direction_penalty = wrong_direction_mask.float() * torch.abs(price_change) * 2
             
             # Штраф за false positives (торговля когда нужно было ждать)
-            false_positive_penalty = ((predicted_direction != 2) & (actual_direction == 2)).float() * 0.5
+#             false_positive_penalty = ((predicted_direction != 2) & (actual_direction == 2)).float() * 0.5
             
             # Комбинированный loss для таймфрейма
-            timeframe_loss = (ce_loss * movement_weight + direction_penalty + false_positive_penalty).mean()
+#             timeframe_loss = (ce_loss * movement_weight + direction_penalty + false_positive_penalty).mean()
             
             # Взвешенный вклад в общий loss
-            total_loss += timeframe_loss * timeframe_weights[timeframe]
+#             total_loss += timeframe_loss * timeframe_weights[timeframe]
             
-        return total_loss
+#         return total_loss
 
 
 class DirectionalMultiTaskLoss(nn.Module):
@@ -911,19 +952,33 @@ class DirectionalMultiTaskLoss(nn.Module):
         if not self.use_dynamic_weights:
             return
         
+        # Извлекаем direction targets
+        if isinstance(targets, dict):
+            direction_targets = targets.get('directions', targets.get('direction_15m', None))
+            if direction_targets is None:
+                return  # Нет direction targets для обновления весов
+            device = direction_targets.device
+        else:
+            direction_targets = targets[:, 4:8]  # direction columns
+            device = targets.device
+
+        # Если direction_targets 1D, расширяем до 4 таймфреймов
+        if direction_targets.dim() == 1:
+            direction_targets = direction_targets.unsqueeze(1).expand(-1, 4)
+
         # Подсчитываем классы в текущем батче
-        batch_counts = torch.zeros(3, device=targets.device)
-        for i in range(targets.shape[1]):  # По всем таймфреймам
+        batch_counts = torch.zeros(3, device=device)
+        for i in range(direction_targets.shape[1]):  # По всем таймфреймам
             for c in range(3):  # По всем классам
-                batch_counts[c] += (targets[:, i] == c).sum().float()
+                batch_counts[c] += (direction_targets[:, i] == c).sum().float()
         
         # Обновляем скользящее среднее (перемещаем на правильное устройство)
-        self.running_class_counts = self.running_class_counts.to(targets.device)
-        self.total_samples = self.total_samples.to(targets.device)
+        self.running_class_counts = self.running_class_counts.to(device)
+        self.total_samples = self.total_samples.to(device)
         
         self.running_class_counts = (self.class_weight_momentum * self.running_class_counts + 
                                      (1 - self.class_weight_momentum) * batch_counts)
-        self.total_samples = self.total_samples + targets.numel()
+        self.total_samples = self.total_samples + direction_targets.numel()
         
         # Вычисляем текущие частоты
         if self.total_samples > 100:  # Начинаем адаптацию после 100 примеров
@@ -1004,31 +1059,51 @@ class DirectionalMultiTaskLoss(nn.Module):
         
         return focal_loss
         
-    def forward(self, outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(self, outputs: torch.Tensor, targets: Union[torch.Tensor, Dict[str, torch.Tensor]]) -> torch.Tensor:
         """
         Вычисление multi-task loss с confidence-aware механизмом
-        
+
         Args:
             outputs: (batch_size, 20) - выходы модели
-            targets: (batch_size, 20) - целевые значения
-            
+            targets: (batch_size, 20) - целевые значения ИЛИ словарь с целевыми значениями
+
         Returns:
             loss: скаляр
         """
         losses = []
-        
+
         # Проверяем активные losses
         use_all_losses = "all" in self.active_losses
-        
+
         # Извлекаем confidence scores если доступны
         confidence_scores = None
         if hasattr(outputs, '_confidence_scores'):
             confidence_scores = outputs._confidence_scores  # (batch_size, 4)
-        
+
+        # Обработка targets как словаря или тензора
+        if isinstance(targets, dict):
+            # Если targets - словарь, извлекаем значения
+            future_returns_target = targets.get('future_returns', targets.get('future_return_15m', None))
+            if future_returns_target is not None and future_returns_target.dim() == 1:
+                # Если только один целевой возврат, используем его для всех горизонтов
+                future_returns_target = future_returns_target.unsqueeze(1).expand(-1, 4)
+            direction_target = targets.get('directions', targets.get('direction_15m', None))
+            long_levels_target = targets.get('long_levels', None)
+            short_levels_target = targets.get('short_levels', None)
+            risk_metrics_target = targets.get('risk_metrics', None)
+        else:
+            # Если targets - тензор, используем индексы
+            future_returns_target = targets[:, 0:4] / 100.0  # Конвертируем из % в доли
+            direction_target = targets[:, 4:8]
+            long_levels_target = targets[:, 8:12]
+            short_levels_target = targets[:, 12:16]
+            risk_metrics_target = targets[:, 16:20]
+
         # 1. Future Returns Loss (индексы 0-3) - MSE для регрессии
         if use_all_losses or "future_returns" in self.active_losses:
-            future_returns_pred = outputs[:, 0:4]
-            future_returns_target = targets[:, 0:4] / 100.0  # Конвертируем из % в доли
+            if future_returns_target is not None:
+                future_returns_pred = outputs[:, 0:4]
+                # target уже нормализован выше, дублирование убрано
             
             # Взвешивание для крупных движений
             abs_returns = torch.abs(future_returns_target)
@@ -1047,71 +1122,79 @@ class DirectionalMultiTaskLoss(nn.Module):
         if use_all_losses or "directions" in self.active_losses:
             if hasattr(outputs, '_direction_logits'):
                 direction_logits = outputs._direction_logits  # (batch_size, 4, 3)
-                direction_targets = targets[:, 4:8].long()  # (batch_size, 4)
-            
-                # Получаем текущие веса (могут быть изменены динамически)
-                current_class_weights = self.class_weights.to(direction_logits.device)
+                # Используем уже извлеченные direction_target
+                if direction_target is not None:
+                    direction_targets = direction_target.long() if not isinstance(targets, dict) else direction_target
 
-                # Энтропийная регуляризация и экстренная коррекция
-                entropy_weight = self.config.get('model', {}).get('entropy_weight', 0.1)
-                entropy_loss = 0.0
-                if entropy_weight > 0:
-                    probs = torch.softmax(direction_logits, dim=-1)
-                    log_probs = torch.log(probs + 1e-8)
-                    entropy = -torch.sum(probs * log_probs, dim=-1)
-                    max_entropy = np.log(3)
-                    normalized_entropy = entropy / max_entropy
-                    mean_entropy = normalized_entropy.mean().item()
+                    # Проверка и исправление размерности
+                    if direction_targets.dim() == 1:
+                        # Если 1D (только один таймфрейм), расширяем до всех 4 таймфреймов
+                        batch_size = direction_targets.shape[0]
+                        direction_targets = direction_targets.unsqueeze(1).expand(-1, 4)  # (batch_size, 4)
 
-                    if self.auto_adjust_on_collapse and mean_entropy < self.collapse_threshold:
-                        pred_classes = torch.argmax(probs, dim=-1)
-                        flat_ratio = (pred_classes == 2).float().mean().item()
-                        if flat_ratio > 0.85:
-                            print(f"🚨 ОБНАРУЖЕНО СХЛОПЫВАНИЕ (flat_ratio={flat_ratio:.2f})! Экстренная корректировка весов.")
-                            emergency_factor = 1.5 + (flat_ratio - 0.85) * 10
-                            current_class_weights[0] *= emergency_factor
-                            current_class_weights[1] *= emergency_factor
-                            current_class_weights[2] /= emergency_factor
-                            current_class_weights = current_class_weights / current_class_weights.mean()
-                            
-                    entropy_penalty = (self.min_entropy_threshold - normalized_entropy).clamp(min=0)
-                    entropy_loss = entropy_penalty.mean() * entropy_weight
+                    # Получаем текущие веса (могут быть изменены динамически)
+                    current_class_weights = self.class_weights.to(direction_logits.device)
 
-                direction_loss = 0
-                for i in range(4):  # Для каждого таймфрейма
-                    focal_loss_val = self.focal_loss(direction_logits[:, i, :], direction_targets[:, i], current_class_weights)
-                    
-                    pred_classes = torch.argmax(direction_logits[:, i, :], dim=-1)
-                    true_classes = direction_targets[:, i]
-                    
-                    # ОТЛАДКА: Логирование логитов для первого батча первой эпохи
-                    if not hasattr(self, '_debug_logged') and i == 0:
-                        self._debug_logged = True
-                        logits_sample = direction_logits[0, i, :].detach().cpu().numpy()
-                        probs_sample = torch.softmax(direction_logits[0, i, :], dim=-1).detach().cpu().numpy()
-                        self.logger.info(f"🔍 DEBUG - Пример логитов и вероятностей для первого сэмпла:")
-                        self.logger.info(f"   Логиты: LONG={logits_sample[0]:.3f}, SHORT={logits_sample[1]:.3f}, FLAT={logits_sample[2]:.3f}")
-                        self.logger.info(f"   Вероятности: LONG={probs_sample[0]:.3f}, SHORT={probs_sample[1]:.3f}, FLAT={probs_sample[2]:.3f}")
-                        self.logger.info(f"   Предсказанный класс: {pred_classes[0].item()}, Истинный класс: {true_classes[0].item()}")
-                        self.logger.info(f"   Веса классов: {current_class_weights.cpu().numpy()}")
-                    
-                    wrong_direction_penalty = (
-                        ((pred_classes == 0) & (true_classes == 1)) |
-                        ((pred_classes == 1) & (true_classes == 0))
-                    ).float() * self.wrong_direction_penalty
-                    
-                    timeframe_loss = focal_loss_val + wrong_direction_penalty
-                    
-                    if confidence_scores is not None:
-                        confidence_weight = 2.0 - confidence_scores[:, i]
-                        timeframe_loss = timeframe_loss * confidence_weight
-                    
-                    direction_loss += timeframe_loss.mean()
-                
-                direction_loss = direction_loss / 4 + entropy_loss
-                
-                dynamic_weight = self.get_dynamic_direction_weight()
-                losses.append(direction_loss * dynamic_weight)
+                    # Энтропийная регуляризация и экстренная коррекция
+                    entropy_weight = self.config.get('model', {}).get('entropy_weight', 0.1)
+                    entropy_loss = 0.0
+                    if entropy_weight > 0:
+                        probs = torch.softmax(direction_logits, dim=-1)
+                        log_probs = torch.log(probs + 1e-8)
+                        entropy = -torch.sum(probs * log_probs, dim=-1)
+                        max_entropy = np.log(3)
+                        normalized_entropy = entropy / max_entropy
+                        mean_entropy = normalized_entropy.mean().item()
+
+                        if self.auto_adjust_on_collapse and mean_entropy < self.collapse_threshold:
+                            pred_classes = torch.argmax(probs, dim=-1)
+                            flat_ratio = (pred_classes == 2).float().mean().item()
+                            if flat_ratio > 0.85:
+                                print(f"🚨 ОБНАРУЖЕНО СХЛОПЫВАНИЕ (flat_ratio={flat_ratio:.2f})! Экстренная корректировка весов.")
+                                emergency_factor = 1.5 + (flat_ratio - 0.85) * 10
+                                current_class_weights[0] *= emergency_factor
+                                current_class_weights[1] *= emergency_factor
+                                current_class_weights[2] /= emergency_factor
+                                current_class_weights = current_class_weights / current_class_weights.mean()
+
+                        entropy_penalty = (self.min_entropy_threshold - normalized_entropy).clamp(min=0)
+                        entropy_loss = entropy_penalty.mean() * entropy_weight
+
+                    direction_loss = 0
+                    for i in range(4):  # Для каждого таймфрейма
+                        focal_loss_val = self.focal_loss(direction_logits[:, i, :], direction_targets[:, i], current_class_weights)
+
+                        pred_classes = torch.argmax(direction_logits[:, i, :], dim=-1)
+                        true_classes = direction_targets[:, i]
+
+                        # ОТЛАДКА: Логирование логитов для первого батча первой эпохи
+                        if not hasattr(self, '_debug_logged') and i == 0:
+                            self._debug_logged = True
+                            logits_sample = direction_logits[0, i, :].detach().cpu().numpy()
+                            probs_sample = torch.softmax(direction_logits[0, i, :], dim=-1).detach().cpu().numpy()
+                            self.logger.info(f"🔍 DEBUG - Пример логитов и вероятностей для первого сэмпла:")
+                            self.logger.info(f"   Логиты: LONG={logits_sample[0]:.3f}, SHORT={logits_sample[1]:.3f}, FLAT={logits_sample[2]:.3f}")
+                            self.logger.info(f"   Вероятности: LONG={probs_sample[0]:.3f}, SHORT={probs_sample[1]:.3f}, FLAT={probs_sample[2]:.3f}")
+                            self.logger.info(f"   Предсказанный класс: {pred_classes[0].item()}, Истинный класс: {true_classes[0].item()}")
+                            self.logger.info(f"   Веса классов: {current_class_weights.cpu().numpy()}")
+
+                        wrong_direction_penalty = (
+                            ((pred_classes == 0) & (true_classes == 1)) |
+                            ((pred_classes == 1) & (true_classes == 0))
+                        ).float() * self.wrong_direction_penalty
+
+                        timeframe_loss = focal_loss_val + wrong_direction_penalty
+
+                        if confidence_scores is not None:
+                            confidence_weight = 2.0 - confidence_scores[:, i]
+                            timeframe_loss = timeframe_loss * confidence_weight
+
+                        direction_loss += timeframe_loss.mean()
+
+                    direction_loss = direction_loss / 4 + entropy_loss
+
+                    dynamic_weight = self.get_dynamic_direction_weight()
+                    losses.append(direction_loss * dynamic_weight)
             else:
                 # КРИТИЧНО: Если нет логитов, это ошибка архитектуры!
                 # Не должны использовать MSE для классификации направлений
@@ -1123,34 +1206,44 @@ class DirectionalMultiTaskLoss(nn.Module):
         
         # 3. Long Levels Loss (индексы 8-11) - BCE для бинарной классификации
         if use_all_losses or "long_levels" in self.active_losses:
-            long_levels_pred = outputs[:, 8:12]
-            long_levels_target = targets[:, 8:12]
-            long_levels_loss = self.bce_with_logits_loss(long_levels_pred, long_levels_target).mean()
-            losses.append(long_levels_loss * self.long_levels_weight)
+            if long_levels_target is not None:
+                long_levels_pred = outputs[:, 8:12]
+                long_levels_loss = self.bce_with_logits_loss(long_levels_pred, long_levels_target).mean()
+                losses.append(long_levels_loss * self.long_levels_weight)
         
         # 4. Short Levels Loss (индексы 12-15) - BCE для бинарной классификации
         if use_all_losses or "short_levels" in self.active_losses:
-            short_levels_pred = outputs[:, 12:16]
-            short_levels_target = targets[:, 12:16]
-            short_levels_loss = self.bce_with_logits_loss(short_levels_pred, short_levels_target).mean()
-            losses.append(short_levels_loss * self.short_levels_weight)
+            if short_levels_target is not None:
+                short_levels_pred = outputs[:, 12:16]
+                short_levels_loss = self.bce_with_logits_loss(short_levels_pred, short_levels_target).mean()
+                losses.append(short_levels_loss * self.short_levels_weight)
         
         # 5. Risk Metrics Loss (индексы 16-19) - MSE для регрессии
         if use_all_losses or "risk_metrics" in self.active_losses:
-            risk_metrics_pred = outputs[:, 16:20]
-            risk_metrics_target = targets[:, 16:20] / 100.0  # Нормализуем если в процентах
-            risk_metrics_loss = self.mse_loss(risk_metrics_pred, risk_metrics_target).mean()
-            losses.append(risk_metrics_loss * self.risk_metrics_weight)
+            if risk_metrics_target is not None:
+                risk_metrics_pred = outputs[:, 16:20]
+                # Нормализуем если в процентах и если targets - тензор
+                if not isinstance(targets, dict):
+                    risk_metrics_target = risk_metrics_target / 100.0
+                risk_metrics_loss = self.mse_loss(risk_metrics_pred, risk_metrics_target).mean()
+                losses.append(risk_metrics_loss * self.risk_metrics_weight)
         
         # 6. Confidence Loss - обучаем предсказывать правильность предсказаний
-        if confidence_scores is not None and hasattr(outputs, '_direction_logits'):
+        if confidence_scores is not None and hasattr(outputs, '_direction_logits') and direction_target is not None:
             direction_logits = outputs._direction_logits
             pred_classes = torch.argmax(direction_logits, dim=-1)
-            true_classes = targets[:, 4:8].long()
-            correct_predictions = (pred_classes == true_classes).float()
-            confidence_targets = correct_predictions * 2 - 1
-            confidence_loss = F.mse_loss(confidence_scores, confidence_targets, reduction='mean')
-            losses.append(confidence_loss * 0.1)
+            # Используем уже извлеченный direction_target
+            true_classes = direction_target.long() if direction_target is not None else None
+
+            if true_classes is not None:
+                # Проверка размерности
+                if true_classes.dim() == 1:
+                    true_classes = true_classes.unsqueeze(1).expand(-1, 4)
+
+                correct_predictions = (pred_classes == true_classes).float()
+                confidence_targets = correct_predictions * 2 - 1
+                confidence_loss = F.mse_loss(confidence_scores, confidence_targets, reduction='mean')
+                losses.append(confidence_loss * 0.1)
         
         if len(losses) > 0:
             total_loss = sum(losses)
@@ -1164,5 +1257,14 @@ class DirectionalMultiTaskLoss(nn.Module):
 
 
 def create_unified_model(config: Dict) -> UnifiedPatchTSTForTrading:
-    """Создание унифицированной модели"""
+    """Создание унифицированной модели
+
+    Args:
+        config: Может быть как полный конфиг с секцией 'model',
+                так и только содержимое секции 'model'
+    """
+    # Если передали только model config, оборачиваем его
+    if 'model' not in config:
+        config = {'model': config}
+
     return UnifiedPatchTSTForTrading(config)

@@ -1,0 +1,230 @@
+{
+  "stage": 1,
+  "stage_info": {
+    "name": "Returns Only",
+    "description": "\u041e\u0431\u0443\u0447\u0435\u043d\u0438\u0435 \u0442\u043e\u043b\u044c\u043a\u043e \u043d\u0430 \u043f\u0440\u0435\u0434\u0441\u043a\u0430\u0437\u0430\u043d\u0438\u0438 \u0432\u043e\u0437\u0432\u0440\u0430\u0442\u043e\u0432",
+    "task_weights": {
+      "returns": 1.0,
+      "directions": 0.0,
+      "levels": 0.0,
+      "risk": 0.0
+    },
+    "epochs": 15,
+    "learning_rate": 0.0002
+  },
+  "config": {
+    "data": {
+      "start_date": "2020-01-01",
+      "end_date": "latest",
+      "interval_minutes": 15,
+      "symbols": [
+        "BTCUSDT",
+        "ETHUSDT",
+        "BNBUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ADAUSDT",
+        "DOGEUSDT",
+        "DOTUSDT",
+        "LINKUSDT",
+        "LTCUSDT",
+        "UNIUSDT",
+        "AVAXUSDT"
+      ],
+      "train_ratio": 0.7,
+      "val_ratio": 0.15,
+      "test_ratio": 0.15,
+      "train_stride": 1,
+      "val_stride": 1,
+      "test_stride": 1,
+      "max_symbols": null
+    },
+    "database": {
+      "host": "localhost",
+      "port": 5555,
+      "database": "crypto_trading",
+      "user": "ruslan",
+      "password": "ruslan",
+      "table": "raw_market_data",
+      "pool_size": 5,
+      "max_overflow": 10
+    },
+    "model": {
+      "name": "UnifiedPatchTST",
+      "context_window": 96,
+      "input_size": 248,
+      "output_size": 20,
+      "d_model": 256,
+      "n_heads": 8,
+      "e_layers": 3,
+      "d_ff": 512,
+      "patch_len": 16,
+      "dropout": 0.15,
+      "attention_dropout": 0.1,
+      "weight_decay": 0.005,
+      "learning_rate": 0.0002,
+      "batch_size": 4096,
+      "gradient_accumulation_steps": 1,
+      "gradient_clip": 1.0,
+      "epochs": 15,
+      "early_stopping_patience": 8,
+      "min_delta": 0.001,
+      "use_amp": true,
+      "amp_dtype": "float16",
+      "use_tf32": true,
+      "compile_model": false,
+      "use_anti_collapse": false,
+      "temperature_scaling": false,
+      "use_symbol_embedding": false,
+      "lr_scheduler": {
+        "type": "cosine",
+        "min_lr": "1e-6",
+        "warmup_epochs": 3
+      },
+      "target_variables": [
+        "future_return_15m",
+        "future_return_1h",
+        "future_return_4h",
+        "future_return_12h",
+        "direction_15m",
+        "direction_1h",
+        "direction_4h",
+        "direction_12h",
+        "will_reach_long_1pct_4h",
+        "will_reach_long_2pct_4h",
+        "will_reach_long_1pct_12h",
+        "will_reach_long_2pct_12h",
+        "will_reach_short_1pct_4h",
+        "will_reach_short_2pct_4h",
+        "will_reach_short_1pct_12h",
+        "will_reach_short_2pct_12h",
+        "max_drawdown_1h",
+        "max_rally_1h",
+        "max_drawdown_4h",
+        "max_rally_4h"
+      ]
+    },
+    "loss": {
+      "task_weights": {
+        "returns": 1.0,
+        "directions": 0.0,
+        "levels": 0.0,
+        "risk": 0.0
+      },
+      "class_weights": [
+        2.0,
+        2.0,
+        1.0
+      ],
+      "use_weighted_sampling": false,
+      "use_focal_loss": false,
+      "adaptive_class_weights": false,
+      "use_dynamic_class_weights": false,
+      "auto_adjust_on_collapse": false,
+      "label_smoothing": 0.03,
+      "entropy_regularization": 0.0,
+      "direction_confidence_threshold": 0.4,
+      "collapse_threshold": 0.9,
+      "min_entropy": 0.5
+    },
+    "features": {
+      "temporal": {
+        "enable": false
+      },
+      "external": {
+        "enable": false
+      },
+      "normalization": {
+        "method": "revin",
+        "window": 500,
+        "min_periods": 50,
+        "causal_only": true
+      },
+      "technical": [
+        {
+          "name": "sma",
+          "periods": [
+            10,
+            20,
+            50
+          ]
+        },
+        {
+          "name": "ema",
+          "periods": [
+            12,
+            26,
+            50
+          ]
+        },
+        {
+          "name": "rsi",
+          "period": 14
+        },
+        {
+          "name": "macd",
+          "fast": 12,
+          "slow": 26,
+          "signal": 9
+        },
+        {
+          "name": "bollinger_bands",
+          "period": 20,
+          "std_dev": 2
+        },
+        {
+          "name": "atr",
+          "period": 14
+        },
+        {
+          "name": "adx",
+          "period": 14
+        }
+      ],
+      "microstructure": [
+        "bid_ask_spread",
+        "volume_weighted_price"
+      ],
+      "cross_asset": []
+    },
+    "trading": {
+      "confidence_thresholds": {
+        "15m": 0.45,
+        "1h": 0.45,
+        "4h": 0.5,
+        "12h": 0.5
+      },
+      "take_profit_levels": [
+        0.01,
+        0.02,
+        0.03
+      ],
+      "stop_loss_levels": [
+        0.01,
+        0.02
+      ]
+    },
+    "backtesting": {
+      "initial_capital": 100000,
+      "commission": 0.001,
+      "slippage": 0.0005,
+      "metrics": [
+        "total_return",
+        "sharpe_ratio",
+        "max_drawdown",
+        "win_rate"
+      ]
+    },
+    "training": {
+      "primary_metric": "macro_f1",
+      "minimize_metric": false,
+      "log_interval": 10,
+      "save_interval": 5,
+      "validate_every_n_epochs": 1,
+      "save_best_only": true
+    },
+    "ensemble": {
+      "enabled": false
+    }
+  }
+}

@@ -47,11 +47,13 @@ class TimeSeriesDataset(Dataset):
         self.stride = stride
         
         # Категориальные переменные v4.0 и их маппинг
+        # ИСПРАВЛЕНО: Правильный маппинг для торговли
+        # LONG=0 (покупка), SHORT=1 (продажа), FLAT=2 (боковик)
         self.categorical_targets = {
-            'direction_15m': {'UP': 0, 'DOWN': 1, 'FLAT': 2},
-            'direction_1h': {'UP': 0, 'DOWN': 1, 'FLAT': 2},
-            'direction_4h': {'UP': 0, 'DOWN': 1, 'FLAT': 2},
-            'direction_12h': {'UP': 0, 'DOWN': 1, 'FLAT': 2}
+            'direction_15m': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2},
+            'direction_1h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2},
+            'direction_4h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2},
+            'direction_12h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2}
         }
         
         # Определение признаков и целевых переменных
@@ -61,6 +63,24 @@ class TimeSeriesDataset(Dataset):
                                and not col.startswith(('target_', 'future_', 'optimal_'))]
         else:
             self.feature_cols = feature_cols
+
+        # Колонки, которые нужно исключить из нормализации
+        # 1) Категориальные индексы (symbol_id и т.п.)
+        self.skip_scale_cols = [col for col in self.feature_cols if col in ('symbol_id',)]
+        # 2) Технические индикаторы с фиксированными или специфическими диапазонами
+        technical_indicators = [
+            'rsi', 'stoch_k', 'stoch_d', 'adx', 'adx_pos', 'adx_neg',
+            'rsi_oversold', 'rsi_overbought', 'toxicity', 'psar_trend',
+            'cci', 'williams_r', 'roc', 'momentum', 'kama', 'trix',
+            'ppo', 'macd', 'macd_signal', 'macd_diff', 'bb_position'
+        ]
+        for col in self.feature_cols:
+            cl = col.lower()
+            if any(tok in cl for tok in technical_indicators):
+                if col not in self.skip_scale_cols:
+                    self.skip_scale_cols.append(col)
+        # Индексы колонок, которые будут нормализоваться
+        self.scale_indices = [i for i, col in enumerate(self.feature_cols) if col not in self.skip_scale_cols]
             
         if target_cols is None:
             # Обновленный список целевых переменных для торговой модели v4.0 (20 переменных)
@@ -145,6 +165,19 @@ class TimeSeriesDataset(Dataset):
             self.logger.info(f"📥 Загрузка scaler из {scaler_path}")
             with open(scaler_path, 'rb') as f:
                 self.scaler = pickle.load(f)
+            # Проверяем совместимость по числу признаков
+            try:
+                expected = getattr(self.scaler, 'n_features_in_', None)
+                scale_cols = [c for c in self.feature_cols if c not in self.skip_scale_cols]
+                current = len(scale_cols)
+                if expected is not None and expected != current:
+                    self.logger.warning(
+                        f"⚠️ Несовпадение признаков скейлера: ожидалось {expected}, текущих {current}. "
+                        f"Отключаю нормализацию для этого датасета, чтобы избежать ошибок."
+                    )
+                    self.scaler = None
+            except Exception as e:
+                self.logger.warning(f"⚠️ Не удалось проверить совместимость скейлера: {e}")
         else:
             self.logger.info("🔨 Создание нового scaler...")
             self.scaler = RobustScaler(quantile_range=(5, 95))
@@ -154,7 +187,9 @@ class TimeSeriesDataset(Dataset):
                 self.logger.info("📊 Обучение scaler на данных...")
                 
                 # Подготовка данных для обучения scaler
-                scaler_data = self.data[self.feature_cols].copy()
+                # Обучаем только на подмножестве колонок, требующих нормализации
+                scale_cols = [c for c in self.feature_cols if c not in self.skip_scale_cols]
+                scaler_data = self.data[scale_cols].copy()
                 
                 # Применяем log-трансформацию к объемным колонкам
                 for col in self.volume_based_cols:
@@ -180,7 +215,10 @@ class TimeSeriesDataset(Dataset):
                         scaler_data[col] = np.clip(scaler_data[col], q01, q99)
                 
                 # Обучаем scaler
-                self.scaler.fit(scaler_data.values)
+                if len(scale_cols) > 0:
+                    self.scaler.fit(scaler_data.values)
+                else:
+                    self.logger.warning("Нет колонок для нормализации (только skip-колонки)")
                 
                 # Сохраняем scaler если указан путь
                 if scaler_path:
@@ -236,19 +274,19 @@ class TimeSeriesDataset(Dataset):
         feature_values = np.nan_to_num(feature_values, nan=0.0, posinf=0.0, neginf=0.0)
         
         # Применяем нормализацию если включена
-        if self.normalize and self.scaler is not None:
+        if self.normalize and self.scaler is not None and len(self.scale_indices) > 0:
             # Создаем копию для нормализации
             norm_values = feature_values.copy()
             
             # Применяем log-трансформацию к объемным колонкам
             for i, col in enumerate(self.feature_cols):
-                if col in self.volume_based_cols:
+                if col in self.volume_based_cols and col not in self.skip_scale_cols:
                     # Log трансформация с защитой от отрицательных значений
                     norm_values[:, i] = np.log1p(np.clip(norm_values[:, i], 0, None))
             
             # Клиппинг экстремальных значений
             for i, col in enumerate(self.feature_cols):
-                if col not in self.ratio_cols:  # Не клиппим ratio колонки
+                if col not in self.ratio_cols and col not in self.skip_scale_cols:  # Не клиппим ratio или skip-колонки
                     # Используем квантили из обучающих данных
                     q99 = np.percentile(norm_values[:, i], 99)
                     q01 = np.percentile(norm_values[:, i], 1)
@@ -256,7 +294,11 @@ class TimeSeriesDataset(Dataset):
             
             # Применяем RobustScaler
             try:
-                norm_values = self.scaler.transform(norm_values)
+                # Масштабируем только подмножество колонок
+                cols = self.scale_indices
+                sub = norm_values[:, cols]
+                sub_scaled = self.scaler.transform(sub)
+                norm_values[:, cols] = sub_scaled
             except Exception as e:
                 self.logger.warning(f"Ошибка при нормализации: {e}")
                 # Fallback к исходным значениям
@@ -299,8 +341,18 @@ class TimeSeriesDataset(Dataset):
                     if col in self.categorical_targets:
                         # Преобразуем категориальное значение в числовое
                         mapping = self.categorical_targets[col]
-                        # Безопасное преобразование с дефолтным значением
-                        numeric_value = mapping.get(str(value), 2)  # 2 = FLAT/HOLD по умолчанию
+                        # Пробуем разные форматы значения
+                        if value in mapping:
+                            numeric_value = mapping[value]
+                        elif str(value) in mapping:
+                            numeric_value = mapping[str(value)]
+                        elif isinstance(value, (int, float)):
+                            # Если это уже число, используем его напрямую
+                            numeric_value = int(value)
+                        else:
+                            # Fallback к FLAT только если действительно не можем определить
+                            self.logger.warning(f"Неизвестное значение '{value}' для {col}, используем FLAT=2")
+                            numeric_value = 2
                         y_values.append(float(numeric_value))
                     else:
                         # Обычные числовые переменные

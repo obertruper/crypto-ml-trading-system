@@ -85,7 +85,7 @@ class TradingLogger:
     
     def _create_file_handler(self, log_dir: Path) -> logging.Handler:
         """Создание файлового обработчика с ротацией"""
-        log_file = log_dir / f"{self.name}_{datetime.now().strftime('%Y%m%d')}.log"
+        log_file = log_dir / "training.log"
         
         file_handler = logging.handlers.RotatingFileHandler(
             log_file,
@@ -104,7 +104,7 @@ class TradingLogger:
     
     def _create_json_handler(self, log_dir: Path) -> logging.Handler:
         """Создание JSON обработчика для структурированных логов"""
-        json_file = log_dir / f"{self.name}_structured_{datetime.now().strftime('%Y%m%d')}.json"
+        json_file = log_dir / "training_structured.json"
         
         json_handler = logging.handlers.RotatingFileHandler(
             json_file,

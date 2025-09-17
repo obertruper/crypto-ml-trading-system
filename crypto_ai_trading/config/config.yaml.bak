@@ -1,0 +1,575 @@
+backtesting:
+  commission: 0.001
+  slippage: 0.0005
+  initial_capital: 100000
+  metrics:
+  - total_return
+  - sharpe_ratio
+  - max_drawdown
+  - win_rate
+  - profit_factor
+  - expectancy
+  - calmar_ratio
+bybit:
+  fees:
+    funding_rate: 0.0001
+    maker: 0.0002
+    taker: 0.00055
+  slippage:
+    base: 0.0005
+    market_impact_threshold: 0.01
+data:
+  end_date: latest
+  interval_minutes: 15
+  start_date: '2018-01-01'
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - 1INCHUSDT
+  test_ratio: 0.2
+  train_ratio: 0.6
+  val_ratio: 0.2
+  train_stride: 1
+  val_stride: 1
+  test_stride: 4
+  max_symbols: null
+  walk_forward:
+    step_size: 7
+    test_window: 30
+    training_window: 180
+    validation_window: 30
+database:
+  database: crypto_trading
+  host: localhost
+  max_overflow: 20
+  password: ruslan
+  pool_size: 10
+  port: 5555
+  table: raw_market_data
+  user: ruslan
+ensemble:
+  enabled: true
+  models_count: 5
+  rebalance_frequency: weekly
+  voting_method: weighted_average
+  weight_metric: sharpe_ratio
+features:
+  temporal:
+    enable: true
+    allow_weekly_cycle: false
+    allow_monthly_cycle: false
+    allow_seasonal: false
+  market_context:
+    enable: true
+    internal_only: true
+    fear_greed_components: true
+    breadth_indicators: true
+  external:
+    enable: false
+    glassnode: false
+    coinmetrics: false
+    macro_correlations: false
+  normalization:
+    method: revin
+    window: 1000
+    min_periods: 100
+    causal_only: true
+  cross_asset:
+  - btc_dominance_effect
+  - sector_correlation
+  - lead_lag_signals
+  microstructure:
+  - bid_ask_spread
+  - order_book_imbalance
+  - volume_weighted_price
+  - trade_flow_toxicity
+  technical:
+  - name: sma
+    periods:
+    - 10
+    - 20
+    - 50
+  - name: ema
+    periods:
+    - 12
+    - 26
+  - name: rsi
+    period: 14
+  - fast: 12
+    name: macd
+    signal: 9
+    slow: 26
+  - name: bollinger_bands
+    period: 20
+    std_dev: 2
+  - name: atr
+    period: 14
+  - bins: 20
+    name: volume_profile
+logging:
+  handlers:
+  - console
+  - file
+  level: INFO
+  log_dir: .
+  tensorboard:
+    enabled: true
+    log_dir: experiments/tensorboard
+  wandb:
+    enabled: false
+    entity: your-entity
+    project: crypto-ai-trading
+loss:
+  name: directional_multitask
+  params:
+    reduction: mean
+  task_weights:
+    future_returns: 0.7
+    directions: 1.0
+    long_levels: 0.5
+    short_levels: 0.5
+    risk_metrics: 0.4
+  class_weights:
+  - 2.5  # LONG - увеличиваем вес для борьбы с коллапсом
+  - 2.5  # SHORT - увеличиваем вес для борьбы с коллапсом
+  - 0.5  # FLAT - снижаем вес для уменьшения доминирования
+  use_weighted_sampling: true  # Включаем для балансировки батчей
+  adaptive_class_weights: true
+  use_dynamic_class_weights: true  # Включаем для адаптивной корректировки
+  flat_preservation_weight: 0.0  # Убираем сохранение FLAT
+  min_flat_ratio: 0.3  # Снижаем целевую долю FLAT
+  entropy_regularization: 0.8  # Сильная регуляризация для разнообразия
+  min_entropy_weight: 1.0
+  entropy_min_weight: 0.8
+  label_smoothing: 0.15  # Увеличиваем для предотвращения коллапса
+  auto_adjust_on_collapse: true
+  collapse_threshold: 0.7  # Более строгий порог
+  min_entropy: 0.9  # Требуем высокую энтропию
+  large_move_threshold: 0.003  # Снижаем порог для большего количества сигналов
+  large_move_weight: 8.0  # Увеличиваем вес значимых движений
+  use_focal_loss: true  # Включаем focal loss для редких классов
+  focal_alpha: 0.5  # Увеличиваем для баланса
+  focal_gamma: 3.0  # Увеличиваем для фокуса на сложных примерах
+  wrong_direction_penalty: 3.0  # Увеличиваем штраф за неправильное направление
+  direction_warmup: 0.8  # Увеличиваем фокус на направлениях
+  warmup_epochs: 15  # Больше эпох для прогрева
+model:
+  activation: gelu
+  batch_norm: true
+  batch_size: 4096  # Увеличиваем batch size для лучшей статистики
+  context_window: 96
+  d_ff: 512
+  d_model: 256
+  dropout: 0.3  # Снижаем для лучшего обучения
+  attention_dropout: 0.15  # Снижаем для лучшего внимания
+  weight_decay: 0.005  # Снижаем регуляризацию
+  e_layers: 3
+  early_stopping_patience: 20  # Больше терпения
+  epochs: 150  # Больше эпох
+  gradient_clip: 0.5  # Увеличиваем для больших градиентов
+  gradient_accumulation_steps: 4  # Снижаем для более частых обновлений
+  individual: false
+  input_size: 261  # Обновлено: реальное количество признаков в данных
+  learning_rate: 5.0e-05  # Увеличиваем LR для выхода из коллапса
+  min_delta: 0.0001
+  n_heads: 8
+  name: UnifiedPatchTST
+  output_size: 20
+  overfitting_threshold: 0.3
+  patch_len: 16
+  use_amp: true
+  amp_dtype: float16
+  compile_model: false
+  use_tf32: true
+  use_anti_collapse: true
+  temperature_scaling: true
+  temperature: 3.0  # Увеличиваем для большего разнообразия
+  head: hierarchical
+  hierarchical:
+    loss_weights:
+    - 1.0
+    - 1.0
+    - 0.5
+    - 0.5
+    teacher_forcing: true
+    teacher_dropout: 0.1
+    confidence_threshold: 0.6
+  temperature_confidence: 0.45
+  direction_confidence_threshold: 0.6
+  lr_scheduler:
+    type: cosine_with_restarts  # Изменяем на перезапуски для выхода из локальных минимумов
+    min_lr: 1e-6  # Повышаем минимальный LR
+    warmup_epochs: 5  # Больше прогрева
+    T_0: 20  # Период перезапуска
+    T_mult: 2  # Увеличение периода
+  target_variables:
+  - future_return_15m
+  - future_return_1h
+  - future_return_4h
+  - future_return_12h
+  - direction_15m
+  - direction_1h
+  - direction_4h
+  - direction_12h
+  - long_will_reach_1pct_4h
+  - long_will_reach_2pct_4h
+  - long_will_reach_3pct_12h
+  - long_will_reach_5pct_12h
+  - short_will_reach_1pct_4h
+  - short_will_reach_2pct_4h
+  - short_will_reach_3pct_12h
+  - short_will_reach_5pct_12h
+  - max_drawdown_1h
+  - max_rally_1h
+  - max_drawdown_4h
+  - max_rally_4h
+  task_type: trading
+  target_window: 1
+  pred_len: 1
+  stride: 8
+  warmup_steps: 500
+  label_smoothing: 0.05
+  mixup_alpha: 0.0
+  cutmix_alpha: 1.0
+  cutmix_prob: 0.3
+  time_warp_factor: 0.2
+  magnitude_warp: 0.1
+  window_slice: 0.9
+  gaussian_noise: 0.01
+  use_ema: false
+  weight_noise: 0.0
+  confidence_threshold: 0.65
+  dropout_schedule: false
+  use_dropout_schedule: false
+  entropy_weight: 0.5
+  min_entropy_threshold: 0.5
+  l2_regularization: 0.001
+  use_improvements: false
+  feature_attention: true
+  multi_scale_patches: true
+  direction_head_init:
+    bias_init: balanced  # Инициализация с учетом дисбаланса классов
+    weight_scale: 2.0  # Увеличиваем масштаб для сильного сигнала
+    use_xavier: false  # Отключаем xavier для кастомной инициализации
+    method: normal  # Используем нормальную инициализацию
+
+  # КРИТИЧЕСКИ ВАЖНО: Bias для балансировки классов direction prediction
+  # Применяется к логитам перед softmax для коррекции схлопывания
+  # Целевое распределение: 15% LONG, 15% SHORT, 70% FLAT
+  # ВАЖНО: Положительный bias увеличивает вероятность класса!
+  direction_bias:
+    - 0.0  # LONG bias (нейтральный для естественного обучения)
+    - 0.0  # SHORT bias (нейтральный для естественного обучения)
+    - 0.0  # FLAT bias (нейтральный для естественного обучения)
+optimizer:
+  name: AdamW
+  params:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-08
+performance:
+  cache_dir: cache/
+  cache_features: true
+  data_parallel: true
+  device: cuda
+  mixed_precision: true
+  num_workers: 12
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 4
+  shuffle_train: false
+  gradient_accumulation_steps: 2
+  gpu_cache_clear_freq: 20
+  monitor_gpu_memory: true
+  dataloader_pin_memory: true
+  dataloader_drop_last: true
+  use_precomputed_dataset: true
+  use_precomputed_cache: true
+remote_server:
+  direct_connection:
+    host: ssh1.vast.ai
+    key_path: ~/.ssh/id_rsa
+    port: 30421
+    user: root
+  enabled: true
+  ports:
+    jupyter: 8888
+    tensorboard: 6006
+    web_ui: 8080
+  python_path: /opt/conda/bin/python
+  remote_path: /root/crypto_ai_trading
+  ssh_alias: vast-current
+  sync:
+    exclude:
+    - cache/
+    - '*.pyc'
+    - __pycache__/
+    - .git/
+    - logs/
+    - models_saved/
+    - experiments/runs/
+    - .DS_Store
+risk_management:
+  max_concurrent_positions: 100
+  max_positions_per_symbol: 3
+  partial_close_sizes:
+  - 40
+  - 40
+  - 20
+  position_sizing:
+    correlation_adjustment: true
+    max_position_pct: 15.0
+    max_risk_per_trade: 1.0
+    method: kelly_criterion
+  risk_reward_ratio: 2.5
+  stop_loss_pct: 1.5
+  take_profit_targets:
+  - 1.0
+  - 2.0
+  - 3.0
+  volatility_adjustment:
+    altcoin_risk_multiplier: 0.7
+    high_vol_multipliers:
+    - 1.8
+    - 3.0
+    - 5.0
+    high_vol_threshold: 3.0
+    low_vol_multipliers:
+    - 1.2
+    - 2.0
+    - 3.0
+    low_vol_threshold: 1.5
+    major_coins:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    major_risk_multiplier: 1.0
+    meme_coin_risk_multiplier: 0.5
+scheduler:
+  name: ReduceLROnPlateau
+  params:
+    mode: max
+    factor: 0.7
+    patience: 8
+    threshold: 0.0005
+    cooldown: 3
+    min_lr: 5.0e-06
+  monitor: val_macro_f1
+trading:
+  max_daily_trades: 200
+  max_positions: 20
+  min_confidence_threshold: 0.55
+  multiframe_confirmation: true
+  rebalance_interval: 1h
+validation:
+  max_drawdown: 0.2
+  min_sharpe_ratio: 1.5
+  min_win_rate: 0.25
+  statistical_tests:
+  - sharpe_ratio_test
+  - information_ratio
+  - monte_carlo_permutation
+  leak_detection:
+    enable: true
+    embargo_days: 1
+    check_suspicious_features: true
+    suspicious_keywords:
+    - weekend
+    - day_of_week
+    - month
+    - quarter
+    - seasonal
+    max_suspicious_uplift: 1.5
+  ablation:
+    run_automatically: true
+    configs:
+      baseline:
+        temporal: false
+        market_context: false
+      temporal_only:
+        temporal: true
+        market_context: false
+      context_only:
+        temporal: false
+        market_context: true
+      full:
+        temporal: true
+        market_context: true
+  temporal_split:
+    method: forward_looking
+    no_shuffle: true
+    gap_between_splits: true
+staged_training:
+  enabled: true
+  mixed_precision: false
+  stages:
+  - stage: 1
+    name: "FLAT Recovery - \u0412\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\
+      \u0435\u043D\u0438\u0435 \u0431\u0430\u043B\u0430\u043D\u0441\u0430 \u043A\u043B\
+      \u0430\u0441\u0441\u043E\u0432"
+    description: "\u0410\u043A\u0442\u0438\u0432\u0430\u0446\u0438\u044F FLAT \u043A\
+      \u043B\u0430\u0441\u0441\u0430 \u0438 \u043F\u0440\u0435\u0434\u043E\u0442\u0432\
+      \u0440\u0430\u0449\u0435\u043D\u0438\u0435 \u0441\u0445\u043B\u043E\u043F\u044B\
+      \u0432\u0430\u043D\u0438\u044F"
+    epochs: 20
+    learning_rate: 1.0e-05
+    dropout: 0.1
+    gradient_accumulation_steps: 4
+    gradient_clip: 0.1  # Снижаем для предотвращения взрыва градиентов
+    batch_size: 4096
+    class_weights:
+    - 3.0  # Вес для LONG
+    - 3.0  # Вес для SHORT
+    - 1.0  # Вес для FLAT
+    # Bias для инициализации direction head
+    # КРИТИЧЕСКИ ВАЖНО: соответствует основному model.direction_bias
+    direction_bias:
+    - 0.0  # LONG bias (нейтральный)
+    - 0.0  # SHORT bias (нейтральный)
+    - 0.0  # FLAT bias (нейтральный)
+    label_smoothing: 0.15
+    temperature: 1.8
+    use_weighted_sampling: false
+    confidence_threshold: 0.3
+    early_stopping_patience: 7
+    monitor_metric: entropy
+    min_entropy: 0.85
+  - stage: 2
+    name: "Balance - \u0421\u0442\u0430\u0431\u0438\u043B\u0438\u0437\u0430\u0446\u0438\
+      \u044F \u0440\u0430\u0441\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\
+      \u044F"
+    description: "\u0414\u043E\u0441\u0442\u0438\u0436\u0435\u043D\u0438\u0435 \u0441\
+      \u0431\u0430\u043B\u0430\u043D\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043D\
+      \u043E\u0433\u043E \u0440\u0430\u0441\u043F\u0440\u0435\u0434\u0435\u043B\u0435\
+      \u043D\u0438\u044F \u043A\u043B\u0430\u0441\u0441\u043E\u0432"
+    epochs: 20
+    learning_rate: 3.0e-05
+    dropout: 0.25
+    gradient_accumulation_steps: 2
+    gradient_clip: 0.1  # Снижаем для предотвращения взрыва градиентов
+    batch_size: 8192
+    class_weights:
+    - 0.6  # Снижаем LONG
+    - 0.6  # Снижаем SHORT
+    - 1.8  # Увеличиваем FLAT
+    # КРИТИЧЕСКИ ВАЖНО: direction_bias для предотвращения схлопывания
+    direction_bias:
+    - 0.0  # LONG bias (нейтральный)
+    - 0.0  # SHORT bias (нейтральный)
+    - 0.0  # FLAT bias (нейтральный)
+    label_smoothing: 0.15
+    temperature: 1.2
+    confidence_threshold: 0.4
+    early_stopping_patience: 8
+    monitor_metric: macro_f1
+    target_f1: 0.35
+  - stage: 3
+    name: "Precision - \u0423\u043B\u0443\u0447\u0448\u0435\u043D\u0438\u0435 \u0442\
+      \u043E\u0447\u043D\u043E\u0441\u0442\u0438 \u043F\u0440\u0435\u0434\u0441\u043A\
+      \u0430\u0437\u0430\u043D\u0438\u0439"
+    description: "\u041F\u043E\u0432\u044B\u0448\u0435\u043D\u0438\u0435 \u0442\u043E\
+      \u0447\u043D\u043E\u0441\u0442\u0438 \u0438 F1 Score"
+    epochs: 25
+    learning_rate: 2.0e-05
+    dropout: 0.3
+    gradient_accumulation_steps: 2
+    gradient_clip: 0.1  # Снижаем для предотвращения взрыва градиентов
+    batch_size: 8192
+    class_weights:
+    - 0.7  # Баланс LONG
+    - 0.7  # Баланс SHORT
+    - 1.5  # Увеличиваем FLAT
+    # КРИТИЧЕСКИ ВАЖНО: direction_bias для предотвращения схлопывания
+    direction_bias:
+    - 0.0  # LONG bias (нейтральный)
+    - 0.0  # SHORT bias (нейтральный)
+    - 0.0  # FLAT bias (нейтральный)
+    label_smoothing: 0.1
+    temperature: 1.0
+    confidence_threshold: 0.45
+    early_stopping_patience: 10
+    monitor_metric: macro_f1
+    target_f1: 0.4
+  - stage: 4
+    name: "Trading - \u041E\u043F\u0442\u0438\u043C\u0438\u0437\u0430\u0446\u0438\u044F\
+      \ \u0434\u043B\u044F \u0440\u0435\u0430\u043B\u044C\u043D\u043E\u0439 \u0442\
+      \u043E\u0440\u0433\u043E\u0432\u043B\u0438"
+    description: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0430 \u0434\u043B\
+      \u044F \u043C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u043E\u0433\
+      \u043E Win Rate"
+    epochs: 20
+    learning_rate: 1.0e-05
+    dropout: 0.35
+    gradient_accumulation_steps: 3
+    gradient_clip: 0.1  # Снижаем для предотвращения взрыва градиентов
+    batch_size: 8192
+    class_weights:
+    - 0.8  # Нормальный вес LONG
+    - 0.8  # Нормальный вес SHORT
+    - 1.3  # Повышенный вес FLAT
+    # КРИТИЧЕСКИ ВАЖНО: direction_bias для предотвращения схлопывания
+    direction_bias:
+    - 0.0  # LONG bias (нейтральный)
+    - 0.0  # SHORT bias (нейтральный)
+    - 0.0  # FLAT bias (нейтральный)
+    label_smoothing: 0.05
+    temperature: 1.2  # Увеличиваем для лучшего распределения
+    confidence_threshold: 0.5
+    early_stopping_patience: 8
+    monitor_metric: win_rate
+    target_win_rate: 0.46
+  - stage: 5
+    name: "Final - \u0424\u0438\u043D\u0430\u043B\u044C\u043D\u0430\u044F \u043A\u0430\
+      \u043B\u0438\u0431\u0440\u043E\u0432\u043A\u0430 \u043C\u043E\u0434\u0435\u043B\
+      \u0438"
+    description: "\u0414\u043E\u0441\u0442\u0438\u0436\u0435\u043D\u0438\u0435 \u043E\
+      \u043F\u0442\u0438\u043C\u0430\u043B\u044C\u043D\u044B\u0445 \u043C\u0435\u0442\
+      \u0440\u0438\u043A \u0434\u043B\u044F production"
+    epochs: 15
+    learning_rate: 1.0e-05
+    dropout: 0.35
+    gradient_accumulation_steps: 4
+    gradient_clip: 0.1  # Снижаем для предотвращения взрыва градиентов
+    batch_size: 8192
+    class_weights:
+    - 0.9  # Финальный баланс LONG
+    - 0.9  # Финальный баланс SHORT
+    - 1.1  # Немного больше FLAT
+    # КРИТИЧЕСКИ ВАЖНО: direction_bias для финальной калибровки
+    direction_bias:
+    - 0.0  # LONG bias (нейтральный)
+    - 0.0  # SHORT bias (нейтральный)
+    - 0.0  # FLAT bias (нейтральный)
+    label_smoothing: 0.02
+    temperature: 0.8
+    confidence_threshold: 0.6
+    early_stopping_patience: 5
+    monitor_metric: combined
+    target_f1: 0.45
+    target_win_rate: 0.5
+  collapse_prevention:
+    min_flat_ratio: 0.2
+    flat_boost_factor: 2.0
+    max_class_ratio: 0.8
+    dominant_class_penalty: 0.5
+    check_frequency: 100
+    auto_restart_on_collapse: true
+    max_restarts: 2
+  monitoring:
+    log_frequency: 50
+    save_best_checkpoint: true
+    track_metrics:
+    - f1_score
+    - win_rate
+    - entropy
+    - flat_ratio
+    - direction_accuracy
+    - class_distribution
+    success_criteria:
+      min_f1: 0.48
+      min_win_rate: 0.6
+      min_flat_ratio: 0.35
+      max_flat_ratio: 0.55
+      min_entropy: 0.9

@@ -59,7 +59,7 @@ data_download:
 database:
   dbname: crypto_trading
   host: localhost
-  password: your_secure_password_here
+  password: ruslan
   port: 5555
   user: ruslan
 model:

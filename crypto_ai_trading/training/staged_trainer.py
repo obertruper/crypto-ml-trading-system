@@ -25,7 +25,10 @@ class StagedTrainer:
         self.logger = get_logger("StagedTrainer")
         
         # Проверяем конфигурацию поэтапного обучения
-        self.staged_config = config.get('production', {}).get('staged_training', {})
+        # Сначала ищем в корне конфига, потом в production
+        self.staged_config = config.get('staged_training', {})
+        if not self.staged_config:
+            self.staged_config = config.get('production', {}).get('staged_training', {})
         self.enabled = self.staged_config.get('enabled', False)
         
         if not self.enabled:
@@ -66,6 +69,12 @@ class StagedTrainer:
             self.logger.info("="*80)
             
             # Создаем конфигурацию для текущего этапа
+            # DEBUG: выводим что есть в stage
+            self.logger.info(f"🔍 Stage содержит ключи: {list(stage.keys())}")
+            if 'direction_bias' in stage:
+                self.logger.info(f"✅ direction_bias найден в stage: {stage['direction_bias']}")
+            else:
+                self.logger.warning(f"⚠️ direction_bias НЕ найден в stage!")
             stage_config = self._create_stage_config(stage)
             
             # Создаем трейнер для этапа
@@ -75,7 +84,18 @@ class StagedTrainer:
             self._configure_losses(trainer, stage)
             
             # Обучение на этапе
-            stage_history = trainer.train(train_loader, val_loader)
+            try:
+                stage_history = trainer.train(train_loader, val_loader)
+            except RuntimeError as e:
+                if "No inf checks" in str(e):
+                    self.logger.warning(f"⚠️ Ошибка GradScaler на этапе {stage['name']}. Отключаем AMP...")
+                    # Пересоздаем конфигурацию без AMP
+                    stage_config['performance']['mixed_precision'] = False
+                    trainer = OptimizedTrainer(self.model, stage_config, self.device)
+                    self._configure_losses(trainer, stage)
+                    stage_history = trainer.train(train_loader, val_loader)
+                else:
+                    raise
             
             # Сохраняем историю
             stage_name = f"stage_{stage_idx}_{stage['name']}"
@@ -125,9 +145,28 @@ class StagedTrainer:
         if 'gradient_clip' in stage:
             stage_config['model']['gradient_clip'] = stage['gradient_clip']
             self.logger.info(f"✂️ Gradient clipping: {stage['gradient_clip']}")
-            
+
+        # КРИТИЧЕСКИ ВАЖНО: Добавляем direction_bias для борьбы со схлопыванием
+        if 'direction_bias' in stage:
+            stage_config['model']['direction_bias'] = stage['direction_bias']
+            self.logger.info(f"🎯 Direction bias из этапа: {stage['direction_bias']}")
+        else:
+            # Если в этапе нет direction_bias, берем из основного конфига
+            if 'direction_bias' in self.original_config.get('model', {}):
+                stage_config['model']['direction_bias'] = self.original_config['model']['direction_bias']
+                self.logger.info(f"🎯 Direction bias из model config: {self.original_config['model']['direction_bias']}")
+            else:
+                # Естественное обучение без искусственных bias
+                stage_config['model']['direction_bias'] = [0.0, 0.0, 0.0]
+                self.logger.info(f"🎯 Direction bias не найден в config, используем нейтральные значения: [0.0, 0.0, 0.0] для естественного обучения")
+
         # Устанавливаем количество эпох
         stage_config['model']['epochs'] = stage['epochs']
+        
+        # Проверяем настройку Mixed Precision для поэтапного обучения
+        if 'mixed_precision' in self.staged_config:
+            stage_config['performance']['mixed_precision'] = self.staged_config['mixed_precision']
+            self.logger.info(f"🔧 Mixed Precision для поэтапного обучения: {self.staged_config['mixed_precision']}")
         
         return stage_config
         
@@ -197,9 +236,9 @@ class StagedTrainer:
                     if module.bias is not None:
                         with torch.no_grad():
                             bias = module.bias.view(4, 3)
-                            bias[:, 0] = 0.3    # LONG bias (умеренно положительный)
-                            bias[:, 1] = 0.3    # SHORT bias (умеренно положительный)  
-                            bias[:, 2] = -1.2   # FLAT bias (сильно отрицательный для подавления)
+                            bias[:, 0] = 0.0    # LONG bias (нейтральный)
+                            bias[:, 1] = 0.0    # SHORT bias (нейтральный)
+                            bias[:, 2] = 0.0    # FLAT bias (нейтральный)
                             
         # Не увеличиваем learning rate чтобы избежать NaN
         self.logger.info("🔧 Коррекция применена без изменения learning rate")

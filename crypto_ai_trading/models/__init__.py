@@ -2,7 +2,7 @@
 >4C;L <>45;59 <0H8==>3> >1CG5=8O
 """
 
-from .patchtst import PatchTSTForPrediction
+# from .patchtst import PatchTSTForPrediction  # Файл patchtst.py отсутствует
 from .losses import (
     TradingLoss, DirectionalLoss, ProfitLoss, SharpeRatioLoss,
     MaxDrawdownLoss, RiskAdjustedLoss, FocalLoss, TripletLoss,
@@ -12,7 +12,7 @@ from .losses import (
 # from .ensemble import (...)
 
 __all__ = [
-    'PatchTSTForPrediction',
+    # 'PatchTSTForPrediction',  # Закомментировано, так как файл patchtst.py отсутствует
     'TradingLoss',
     'DirectionalLoss',
     'ProfitLoss',
@@ -23,6 +23,8 @@ __all__ = [
     'TripletLoss',
     'MultiTaskLoss',
     'get_loss_function',
+    'UnifiedPatchTST',
+    'create_unified_model',
     # Ensemble модули временно отключены
     # 'BaseEnsemble',
     # 'VotingEnsemble',
@@ -33,4 +35,4 @@ __all__ = [
     # 'create_ensemble'
 ]
 # Унифицированная модель
-from .patchtst_unified import UnifiedPatchTSTForTrading, create_unified_model
+from .patchtst_unified import UnifiedPatchTSTForTrading as UnifiedPatchTST, create_unified_model

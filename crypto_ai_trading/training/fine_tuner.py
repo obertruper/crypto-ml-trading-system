@@ -13,7 +13,7 @@ import yaml
 from tqdm import tqdm
 import time
 
-from models.patchtst_unified import UnifiedPatchTSTForTrading as UnifiedPatchTST
+from models.patchtst_unified import UnifiedPatchTST as UnifiedPatchTST
 from training.optimized_trainer import OptimizedTrainer
 from utils.logger import get_logger
 

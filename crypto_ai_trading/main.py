@@ -101,6 +101,361 @@ class ProductionConfig:
         return self.config
 
 
+class StagedTrainingManager:
+    """Менеджер поэтапного обучения для максимальной эффективности"""
+    
+    def __init__(self, config: dict, logger):
+        self.config = config.copy()
+        self.logger = logger
+        self.original_config = config.copy()
+        self.current_stage = 0
+        self.best_metrics = {'f1': 0, 'win_rate': 0, 'val_loss': float('inf')}
+        # Снапшоты лучших весов/конфига между этапами
+        self.best_state_dict = None
+        self.best_config = None
+        
+    def get_stage_config(self, stage: int) -> tuple:
+        """Получение конфигурации для конкретного этапа из config.yaml"""
+        config = self.config.copy()
+        
+        # Читаем конфигурацию поэтапного обучения из config.yaml
+        staged_config = self.config.get('staged_training', {})
+        if not staged_config.get('enabled', False):
+            self.logger.error("Поэтапное обучение отключено в конфигурации!")
+            return config, "Disabled"
+        
+        stages = staged_config.get('stages', [])
+        if not stages:
+            self.logger.error("Не найдены этапы обучения в конфигурации!")
+            return config, "No stages"
+        
+        # Находим нужный этап
+        stage_config = None
+        for s in stages:
+            if s.get('stage') == stage:
+                stage_config = s
+                break
+        
+        if not stage_config:
+            self.logger.error(f"Не найден этап {stage} в конфигурации!")
+            return config, f"Stage {stage} not found"
+        
+        # Применяем настройки этапа
+        stage_name = stage_config.get('name', f'Stage {stage}')
+        
+        # Обновляем параметры модели
+        if 'learning_rate' in stage_config:
+            config['model']['learning_rate'] = stage_config['learning_rate']
+        if 'dropout' in stage_config:
+            config['model']['dropout'] = stage_config['dropout']
+        if 'gradient_accumulation_steps' in stage_config:
+            config['model']['gradient_accumulation_steps'] = stage_config['gradient_accumulation_steps']
+            # ВАЖНО: Trainer читает из config['performance']
+            if 'performance' not in config:
+                config['performance'] = {}
+            config['performance']['gradient_accumulation_steps'] = stage_config['gradient_accumulation_steps']
+            # И на всякий случай в training тоже
+            if 'training' not in config:
+                config['training'] = {}
+            config['training']['gradient_accumulation_steps'] = stage_config['gradient_accumulation_steps']
+        if 'epochs' in stage_config:
+            config['model']['epochs'] = stage_config['epochs']
+        if 'early_stopping_patience' in stage_config:
+            config['model']['early_stopping_patience'] = stage_config['early_stopping_patience']
+
+        # Обновляем параметры loss
+        # ВАЖНО: DirectionalMultiTaskLoss читает из config['loss'], а не из config['loss_config']
+        if 'loss' not in config:
+            config['loss'] = {}
+        if 'class_weights' in stage_config:
+            config['loss']['class_weights'] = stage_config['class_weights']
+            # Дублируем для обратной совместимости
+            if 'loss_config' not in config:
+                config['loss_config'] = {}
+            config['loss_config']['class_weights'] = stage_config['class_weights']
+        if 'label_smoothing' in stage_config:
+            # Используется в DirectionalMultiTaskLoss
+            config['loss']['label_smoothing'] = stage_config['label_smoothing']
+            # Держим в model для совместимости со старыми путями
+            config['model']['label_smoothing'] = stage_config['label_smoothing']
+        if 'temperature' in stage_config:
+            # Модель читает температуру из model.temperature при включенном temperature_scaling
+            config.setdefault('model', {})['temperature'] = stage_config['temperature']
+            # Оставляем дубликат в loss_config для обратной совместимости
+            config.setdefault('loss_config', {})['temperature'] = stage_config['temperature']
+        if 'confidence_threshold' in stage_config:
+            config['trading']['confidence_threshold'] = stage_config['confidence_threshold']
+
+        # КРИТИЧЕСКИ ВАЖНО: Добавляем direction_bias из этапа в model конфиг
+        if 'direction_bias' in stage_config:
+            if 'model' not in config:
+                config['model'] = {}
+            config['model']['direction_bias'] = stage_config['direction_bias']
+            self.logger.info(f"✅ Direction bias применен из этапа {stage}: {stage_config['direction_bias']}")
+
+        # Управление включением Weighted Sampling на этапе (если задано)
+        if 'use_weighted_sampling' in stage_config:
+            # Поддерживаем оба места в конфиге: training.use_weighted_sampling и loss.use_weighted_sampling
+            if 'training' not in config:
+                config['training'] = {}
+            config['training']['use_weighted_sampling'] = bool(stage_config['use_weighted_sampling'])
+            config['loss']['use_weighted_sampling'] = bool(stage_config['use_weighted_sampling'])
+
+        # Обновляем batch_size
+        if 'batch_size' in stage_config:
+            # DataLoader использует model.batch_size
+            config['model']['batch_size'] = stage_config['batch_size']
+            # Держим копию в training для совместимости
+            config['training']['batch_size'] = stage_config['batch_size']
+
+        return config, stage_name
+        
+    
+    def _recursive_update(self, d: dict, u: dict) -> dict:
+        """Рекурсивное обновление словаря"""
+        for k, v in u.items():
+            if isinstance(v, dict):
+                d[k] = self._recursive_update(d.get(k, {}), v)
+            else:
+                d[k] = v
+        return d
+    
+    def run_staged_training(self, train_loader, val_loader, test_loader) -> tuple:
+        """Запуск поэтапного обучения"""
+        from models.patchtst_unified import create_model as create_unified_model
+        from training.optimized_trainer import OptimizedTrainer
+        import copy
+        
+        best_model = None
+        best_stage = 0
+        
+        self.logger.info("""
+╔══════════════════════════════════════════════════════════╗
+║     🎯 ПОЭТАПНОЕ ОБУЧЕНИЕ ДЛЯ МАКСИМАЛЬНОЙ ТОЧНОСТИ      ║
+╚══════════════════════════════════════════════════════════╝
+        """)
+        
+        # Проходим по всем этапам
+        for stage in range(1, 6):
+            config, stage_name = self.get_stage_config(stage)
+            
+            # ВАЖНО: Отключаем AMP для staged training из-за проблем с GradScaler при пересоздании оптимизатора
+            # Проблема: scaler создается с одним оптимизатором, а затем OptimizedTrainer создает новый
+            if 'performance' in config:
+                config['performance']['mixed_precision'] = False
+                self.logger.debug("⚠️ AMP отключен для staged training из-за проблем с GradScaler")
+            
+            self.logger.info(f"\n{'='*60}")
+            self.logger.info(f"🚀 ЭТАП {stage}: {stage_name}")
+            self.logger.info(f"{'='*60}")
+            
+            # Всегда создаем новую модель для этапа и, если есть, инициализируем лучшими весами
+            model = create_unified_model(config['model'])
+            if self.best_state_dict is not None:
+                try:
+                    model.load_state_dict(self.best_state_dict, strict=False)
+                    self.logger.info("🔁 Инициализируем модель этапа лучшими весами предыдущих этапов")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Не удалось загрузить лучшие веса в модель этапа: {e}")
+            
+            # Создаем тренера
+            trainer = OptimizedTrainer(
+                model=model,
+                config=config
+            )
+            
+            # Обучаем
+            try:
+                # Логируем параметры этапа
+                self.logger.info(f"📊 Параметры этапа {stage}:")
+                self.logger.info(f"   - Learning rate: {config['model'].get('learning_rate', 0.0001)}")
+                self.logger.info(f"   - Dropout: {config['model'].get('dropout', 0.3)}")
+                self.logger.info(f"   - Epochs: {config['model'].get('epochs', 50)}")
+                self.logger.info(f"   - Class weights: {config.get('loss', {}).get('class_weights', [1.0, 1.0, 1.0])}")
+                self.logger.info(f"   - Batch size: {config['training'].get('batch_size', 8192)}")
+                self.logger.info(f"   - Gradient accumulation: {config['model'].get('gradient_accumulation_steps', 2)}")
+                
+                # Логируем балансировку классов
+                if hasattr(train_loader, 'sampler') and hasattr(train_loader.sampler, 'weights'):
+                    weights = train_loader.sampler.weights
+                    unique_weights = torch.unique(weights)
+                    self.logger.info(f"🎯 Балансировка классов:")
+                    self.logger.info(f"   - Уникальные веса: {unique_weights.tolist()[:10]}...") 
+                    self.logger.info(f"   - Min: {weights.min():.2f}, Max: {weights.max():.2f}, Mean: {weights.mean():.2f}")
+                
+                # Обучаем модель
+                history = trainer.train(train_loader, val_loader)
+                
+                # Анализ важности признаков ВРЕМЕННО ОТКЛЮЧЕН из-за ошибки индексации
+                # TODO: Исправить analyze_gradient_importance для работы с dict outputs
+                pass
+                
+                # Оцениваем результаты с расширенными метриками
+                metrics = trainer.validate_with_enhanced_metrics(val_loader)
+                
+                # Маппинг метрик для совместимости
+                metrics['f1'] = metrics.get('macro_f1_overall', 0.0)
+                metrics['win_rate'] = metrics.get('win_rate_overall', metrics.get('win_rate', 0.0))  # Исправлен маппинг
+                
+                # КРИТИЧНО: Проверка на схлопывание модели
+                self._check_and_fix_collapse(metrics, config, stage)
+                
+                # Логируем результаты этапа
+                self.logger.info(f"\n🎯 Результаты этапа {stage}:")
+                self.logger.info(f"   - F1 Score: {metrics.get('f1', 0):.4f}")
+                self.logger.info(f"   - Win Rate: {metrics.get('win_rate', 0):.4f}")
+                self.logger.info(f"   - Val Loss: {metrics.get('val_loss', float('inf')):.4f}")
+                self.logger.info(f"   - Entropy: {metrics.get('entropy', 0):.3f}")
+                
+                # Логируем распределение классов
+                if 'class_distribution' in metrics:
+                    dist = metrics['class_distribution']
+                    self.logger.info(f"   - Предсказания: LONG={dist.get('long', 0):.1%}, SHORT={dist.get('short', 0):.1%}, FLAT={dist.get('flat', 0):.1%}")
+                
+                # Проверяем, улучшились ли метрики
+                if self._is_better(metrics):
+                    self.best_metrics = metrics
+                    best_stage = stage
+                    # Сохраняем снапшот лучших весов и конфиг этапа
+                    try:
+                        self.best_state_dict = copy.deepcopy(model.state_dict())
+                        self.best_config = copy.deepcopy(config)
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Не удалось сохранить снапшот лучших весов: {e}")
+                    
+                    # Подробный лог улучшения
+                    self.logger.info(f"\n✅ НОВАЯ ЛУЧШАЯ МОДЕЛЬ!")
+                    self.logger.info(f"   Предыдущие лучшие: F1={self.best_metrics.get('f1', 0):.4f}, WR={self.best_metrics.get('win_rate', 0):.4f}")
+                    self.logger.info(f"   Новые лучшие: F1={metrics.get('f1', 0):.4f}, WR={metrics.get('win_rate', 0):.4f}")
+                    self.logger.info(f"   Улучшение F1: {(metrics.get('f1', 0) - self.best_metrics.get('f1', 0)):.4f}")
+                    self.logger.info(f"   Улучшение WR: {(metrics.get('win_rate', 0) - self.best_metrics.get('win_rate', 0)):.4f}")
+                else:
+                    self.logger.info(f"\n📊 Метрики не улучшились на этапе {stage}")
+                    self.logger.info(f"   Текущие: F1={metrics.get('f1', 0):.4f}, WR={metrics.get('win_rate', 0):.4f}")
+                    self.logger.info(f"   Лучшие: F1={self.best_metrics.get('f1', 0):.4f}, WR={self.best_metrics.get('win_rate', 0):.4f}")
+                    self.logger.info(f"   Сохраняем предыдущие лучшие веса")
+                
+            except Exception as e:
+                import traceback
+                self.logger.error(f"❌ Ошибка на этапе {stage}: {e}")
+                self.logger.error(f"Traceback:\n{traceback.format_exc()}")
+                continue
+        
+        self.logger.info(f"""
+╔══════════════════════════════════════════════════════════╗
+║                ✅ ПОЭТАПНОЕ ОБУЧЕНИЕ ЗАВЕРШЕНО            ║
+╚══════════════════════════════════════════════════════════╝
+
+📊 Лучшие результаты:
+   - Этап: {best_stage}
+   - F1 Score: {self.best_metrics.get('f1', 0):.4f}
+   - Win Rate: {self.best_metrics.get('win_rate', 0):.4f}
+   - Val Loss: {self.best_metrics.get('val_loss', float('inf')):.4f}
+        """)
+        
+        # Сборка финальной лучшей модели из сохраненного снапшота
+        final_model = None
+        if self.best_state_dict is not None and self.best_config is not None:
+            try:
+                final_model = create_unified_model(self.best_config['model'])
+                final_model.load_state_dict(self.best_state_dict, strict=False)
+            except Exception as e:
+                self.logger.warning(f"⚠️ Не удалось собрать финальную модель из лучших весов: {e}")
+
+        return final_model, self.best_metrics
+    
+    def _check_and_fix_collapse(self, metrics: dict, config: dict, stage: int):
+        """Проверка и исправление схлопывания модели"""
+        class_dist = metrics.get('class_distribution', {})
+        
+        # Получаем процент каждого класса
+        long_pct = class_dist.get('long', 0)
+        short_pct = class_dist.get('short', 0)
+        flat_pct = class_dist.get('flat', 0)
+        
+        # Проверяем на схлопывание (один класс > 80%)
+        collapse_detected = False
+        dominant_class = None
+        
+        if flat_pct > 0.80:
+            collapse_detected = True
+            dominant_class = "FLAT"
+            self.logger.warning(f"⚠️ ОБНАРУЖЕНО СХЛОПЫВАНИЕ НА {dominant_class}: {flat_pct:.1%}")
+        elif long_pct > 0.80:
+            collapse_detected = True
+            dominant_class = "LONG"
+            self.logger.warning(f"⚠️ ОБНАРУЖЕНО СХЛОПЫВАНИЕ НА {dominant_class}: {long_pct:.1%}")
+        elif short_pct > 0.80:
+            collapse_detected = True
+            dominant_class = "SHORT"
+            self.logger.warning(f"⚠️ ОБНАРУЖЕНО СХЛОПЫВАНИЕ НА {dominant_class}: {short_pct:.1%}")
+        
+        # Проверяем на отсутствие разнообразия (энтропия)
+        entropy = metrics.get('entropy', 0)
+        if entropy < 0.5:
+            collapse_detected = True
+            self.logger.warning(f"⚠️ НИЗКАЯ ЭНТРОПИЯ: {entropy:.3f} < 0.5")
+        
+        if collapse_detected:
+            self.logger.info("🔧 Применяем автокоррекцию весов классов...")
+            
+            # Корректируем веса в зависимости от доминирующего класса
+            if dominant_class == "FLAT":
+                # Усиливаем LONG и SHORT
+                new_weights = [3.0, 3.0, 0.5]
+                self.logger.info(f"   Новые веса: LONG=3.0, SHORT=3.0, FLAT=0.5")
+            elif dominant_class == "LONG":
+                # Усиливаем SHORT и FLAT
+                new_weights = [0.5, 3.0, 2.0]
+                self.logger.info(f"   Новые веса: LONG=0.5, SHORT=3.0, FLAT=2.0")
+            elif dominant_class == "SHORT":
+                # Усиливаем LONG и FLAT
+                new_weights = [3.0, 0.5, 2.0]
+                self.logger.info(f"   Новые веса: LONG=3.0, SHORT=0.5, FLAT=2.0")
+            else:
+                # Общая коррекция для низкой энтропии
+                new_weights = [2.0, 2.0, 1.0]
+                self.logger.info(f"   Новые веса: LONG=2.0, SHORT=2.0, FLAT=1.0")
+            
+            # Обновляем конфигурацию для следующего этапа
+            if 'loss' not in config:
+                config['loss'] = {}
+            config['loss']['class_weights'] = new_weights
+            
+            # Увеличиваем label smoothing для энтропии
+            config['model']['label_smoothing'] = min(0.2, config['model'].get('label_smoothing', 0.1) * 1.5)
+            self.logger.info(f"   Label smoothing увеличен до {config['model']['label_smoothing']:.2f}")
+            
+            # Увеличиваем температуру для разнообразия
+            if 'loss_config' not in config:
+                config['loss_config'] = {}
+            config['loss_config']['temperature'] = min(1.5, config['loss_config'].get('temperature', 1.0) * 1.2)
+            self.logger.info(f"   Temperature увеличена до {config['loss_config']['temperature']:.2f}")
+    
+    def _is_better(self, metrics: dict) -> bool:
+        """Проверка, улучшились ли метрики"""
+        # Если это первый этап (best_metrics пустые), принимаем любые метрики
+        if self.best_metrics['f1'] == 0:
+            return metrics.get('f1', 0) > 0 or metrics.get('val_loss', float('inf')) < float('inf')
+        
+        # Проверяем на схлопывание - если есть, метрики НЕ лучше
+        class_dist = metrics.get('class_distribution', {})
+        if any(v > 0.80 for v in class_dist.values()):
+            self.logger.warning("⚠️ Модель схлопнулась, не считаем её лучшей")
+            return False
+        
+        # Приоритет: F1 > Win Rate > Val Loss
+        if metrics.get('f1', 0) > self.best_metrics['f1'] * 1.02:  # Улучшение F1 на 2%
+            return True
+        if (metrics.get('f1', 0) >= self.best_metrics['f1'] * 0.98 and  # F1 не сильно хуже
+            metrics.get('win_rate', 0) > self.best_metrics['win_rate']):  # Но Win Rate лучше
+            return True
+        if (metrics.get('f1', 0) >= self.best_metrics['f1'] * 0.98 and  # F1 не сильно хуже
+            metrics.get('val_loss', float('inf')) < self.best_metrics['val_loss'] * 0.95):  # Val Loss значительно лучше
+            return True
+        return False
+
+
 class ModelValidator:
     """Валидация модели перед использованием в production"""
     
@@ -305,10 +660,10 @@ class ProductionInference:
         if not Path(model_path).exists():
             raise FileNotFoundError(f"Модель не найдена: {model_path}")
         
-        from models.patchtst_unified import create_unified_model
+        from models.patchtst_unified import create_model as create_unified_model
         
         # Загружаем checkpoint
-        checkpoint = torch.load(model_path, map_location='cpu')
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
         
         # Обновляем конфигурацию из checkpoint если есть
         if isinstance(checkpoint, dict) and 'config' in checkpoint:
@@ -317,7 +672,7 @@ class ProductionInference:
                 self.config['model'].update(saved_config['model'])
         
         # Создаем модель
-        model = create_unified_model(self.config)
+        model = create_unified_model(self.config['model'])
         
         # Загружаем веса
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -364,6 +719,11 @@ class ProductionInference:
     
     def _parse_outputs(self, outputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Парсинг выходов модели в удобный формат"""
+        # Проверяем тип outputs - может быть кортеж (tensor, attention_weights)
+        if isinstance(outputs, tuple):
+            outputs = outputs[0]  # Берем только тензор, игнорируем attention_weights
+
+        # Теперь безопасно индексируем
         results = {
             'future_returns': outputs[:, 0:4].cpu(),
             'directions': outputs[:, 4:8].cpu(),
@@ -372,12 +732,8 @@ class ProductionInference:
             'risk_metrics': outputs[:, 16:20].cpu()
         }
         
-        # Добавляем классы direction если есть логиты
-        if hasattr(outputs, '_direction_logits'):
-            direction_probs = torch.softmax(outputs._direction_logits, dim=-1)
-            direction_classes = torch.argmax(direction_probs, dim=-1)
-            results['direction_classes'] = direction_classes.cpu()
-            results['direction_probs'] = direction_probs.cpu()
+        # НЕ пытаемся читать атрибуты тензора - это вызывает ошибку
+        # Логиты направлений уже включены в outputs[:, 4:8]
         
         return results
     
@@ -489,6 +845,24 @@ def create_unified_data_loaders(train_data, val_data, test_data, feature_cols, t
     config_updated = config.copy()
     config_updated['model']['input_features'] = len(feature_cols)
     config_updated['model']['n_features'] = len(feature_cols)
+    # КРИТИЧНО: модель читает из input_size, обновляем его под фактические данные
+    config_updated['model']['input_size'] = len(feature_cols)
+    # Также обновим выходной размер на основе целевых переменных
+    config_updated['model']['output_size'] = len(target_cols)
+    # Передаем индекс столбца symbol_id и число символов для symbol embedding
+    if 'symbol_id' in feature_cols:
+        try:
+            config_updated['model']['symbol_id_index'] = int(feature_cols.index('symbol_id'))
+            # Число уникальных символов (для nn.Embedding)
+            n_symbols = len(pd.unique(train_data['symbol'])) if 'symbol' in train_data.columns else config.get('data', {}).get('symbols', [])
+            if isinstance(n_symbols, list):
+                n_symbols = len(n_symbols)
+            config_updated['model']['num_symbols'] = int(n_symbols) if n_symbols else 50
+            # Устанавливаем размер эмбеддинга по умолчанию 32, если не задан
+            if 'symbol_embedding_dim' not in config_updated['model']:
+                config_updated['model']['symbol_embedding_dim'] = 32
+        except Exception:
+            pass
     
     # Проверяем совместимость данных с конфигурацией модели
     task_type = config['model'].get('task_type', 'regression')
@@ -606,29 +980,49 @@ def prepare_data(config: dict, logger):
     
     return train_loader, val_loader, test_loader
 
-def train_model(config: dict, train_loader, val_loader, logger):
+def train_model(config: dict, train_loader, val_loader, logger, model_type='unified', args=None):
     """Обучение модели"""
     import time
     logger.start_stage("model_training")
     
     logger.info("🏗️ Создание модели PatchTST...")
     
-    # ВРЕМЕННОЕ РЕШЕНИЕ: используем известные размеры вместо загрузки батча
-    # TODO: исправить медленную загрузку первого батча с HDF5
-    logger.info("📊 Используем предопределенные размеры данных...")
-    n_features = 240  # Известно из конфигурации
-    n_targets = 20    # Известно из конфигурации
+    # Определяем реальное число признаков/целей из config или из первого батча
+    n_features = (
+        config.get('model', {}).get('n_features')
+        or config.get('model', {}).get('input_features')
+    )
+    n_targets = None
+    if 'model' in config and 'target_variables' in config['model']:
+        try:
+            n_targets = len(config['model']['target_variables'])
+        except Exception:
+            n_targets = None
+    if n_targets is None:
+        n_targets = config.get('model', {}).get('output_size')
     
-    # Закомментировано из-за проблемы с медленной загрузкой
-    # import time
-    # start_time = time.time()
-    # logger.info("📊 Получение первого батча для анализа...")
-    # sample_batch = next(iter(train_loader))
-    # logger.info(f"✅ Первый батч получен за {time.time() - start_time:.2f} секунд")
-    # X_sample, y_sample, _ = sample_batch
-    # 
-    # n_features = X_sample.shape[-1]  # Последняя размерность
-    # n_targets = y_sample.shape[-1] if y_sample is not None else 1
+    # Если из конфигурации не удалось — безопасно читаем первый батч
+    if not n_features or not n_targets:
+        try:
+            import time as _time
+            _t0 = _time.time()
+            logger.info("📊 Получение первого батча для определения размерностей...")
+            X_sample, y_sample, _ = next(iter(train_loader))
+            n_features = n_features or int(X_sample.shape[-1])
+            if hasattr(y_sample, 'shape'):
+                if y_sample.dim() == 3 and y_sample.shape[1] == 1:
+                    n_targets = n_targets or int(y_sample.shape[-1])
+                elif y_sample.dim() == 2:
+                    n_targets = n_targets or int(y_sample.shape[-1])
+                else:
+                    n_targets = n_targets or 20
+            else:
+                n_targets = n_targets or 20
+            logger.info(f"✅ Первый батч получен за {_time.time() - _t0:.2f} секунд")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось определить размерности из батча: {e}")
+            n_features = n_features or 240
+            n_targets = n_targets or 20
     
     logger.info(f"📊 Входные признаки: {n_features}, Целевые переменные: {n_targets}")
     
@@ -637,7 +1031,7 @@ def train_model(config: dict, train_loader, val_loader, logger):
     config_output_size = config['model'].get('output_size', 1)
     task_type = config['model'].get('task_type', 'regression')
     
-    if n_features != config_input_size:
+    if n_features and n_features != config_input_size:
         logger.warning(f"⚠️ Размерность признаков не совпадает: данные={n_features}, конфиг={config_input_size}")
         logger.info(f"🔧 Автоматически обновляем input_size в конфигурации")
         config['model']['input_size'] = n_features
@@ -650,14 +1044,13 @@ def train_model(config: dict, train_loader, val_loader, logger):
         else:
             logger.info(f"📊 Торговая модель: используется PatchTSTForTrading с несколькими выходами")
     else:
-        if n_targets != config_output_size:
+        if n_targets and n_targets != config_output_size:
             logger.warning(f"⚠️ Размерность целей не совпадает: данные={n_targets}, конфиг={config_output_size}")
             logger.info(f"🔧 Автоматически обновляем output_size в конфигурации")
             config['model']['output_size'] = n_targets
     
     # Используем фабрику для создания правильной модели
-    from models.patchtst import create_patchtst_model
-    from models.patchtst_unified import create_unified_model, UnifiedPatchTSTForTrading
+    from models.patchtst_unified import create_unified_model, UnifiedPatchTSTForTrading as UnifiedPatchTST
     
     # Ensemble обучение
     ensemble_count = config.get('training', {}).get('ensemble_count', 1)
@@ -687,11 +1080,9 @@ def train_model(config: dict, train_loader, val_loader, logger):
             if task_type == 'trading' and n_targets > 10:
                 model_config['model']['name'] = 'UnifiedPatchTST'
                 model_config['model']['output_size'] = n_targets
-                model = create_unified_model(model_config)
-            elif model_config['model']['name'] == 'UnifiedPatchTST':
-                model = create_unified_model(model_config)
+                model = create_unified_model(model_config['model'])
             else:
-                model = create_patchtst_model(model_config)
+                model = create_unified_model(model_config['model'])
             
             models.append(model)
         
@@ -703,29 +1094,26 @@ def train_model(config: dict, train_loader, val_loader, logger):
         
     else:
         # Одиночная модель
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда используем UnifiedPatchTST для 20 целевых переменных
         if task_type == 'trading' and n_targets > 10:
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда используем UnifiedPatchTST для 20 целевых переменных
             logger.info(f"🎯 Обнаружено {n_targets} целевых переменных - используем UnifiedPatchTST")
             config['model']['name'] = 'UnifiedPatchTST'
             config['model']['output_size'] = n_targets
             
             model_start_time = time.time()
             logger.info("🔨 Вызов create_unified_model...")
-            model = create_unified_model(config)
+            model = create_unified_model(config['model'])
             logger.info(f"✅ Модель создана за {time.time() - model_start_time:.2f} секунд")
             logger.info(f"✅ UnifiedPatchTST создан с {n_targets} выходами для торговой модели")
             logger.info("⚠️ torch.compile отключен для RTX 5090 (sm_120) - требуется поддержка в будущих версиях PyTorch")
         elif config['model']['name'] == 'UnifiedPatchTST':
-            model = create_unified_model(config)
+            model = create_unified_model(config['model'])
             logger.info("📊 Используется UnifiedPatchTST с 20 выходами")
             logger.info("⚠️ torch.compile отключен для RTX 5090 (sm_120)")
         else:
-            model = create_patchtst_model(config)
-            # Логируем тип модели
-            if hasattr(model, 'long_model'):
-                logger.info("✅ Используется PatchTSTForTrading с поддержкой LONG/SHORT")
-            else:
-                logger.info("📊 Используется базовая PatchTSTForPrediction")
+            # Используем UnifiedPatchTST как базовую модель
+            model = create_unified_model(config['model'])
+            logger.info("📊 Используется UnifiedPatchTST как базовая модель")
     
     # ВАЖНО: Явно перемещаем модель на GPU перед созданием трейнера
     if torch.cuda.is_available():
@@ -737,8 +1125,26 @@ def train_model(config: dict, train_loader, val_loader, logger):
         device = torch.device('cpu')
         logger.warning("⚠️ GPU не доступен, используется CPU")
     
-    # Проверяем, нужно ли использовать поэтапное обучение
-    if config.get('production', {}).get('staged_training', {}).get('enabled', False):
+    # Проверяем, какой trainer использовать
+    if args and hasattr(args, 'curriculum_stage') and args.curriculum_stage > 0:
+        # Используем Curriculum Learning
+        logger.info(f"🎓 Используется Curriculum Learning (этап {args.curriculum_stage})")
+        from training.curriculum_trainer import CurriculumTrainer
+        trainer = CurriculumTrainer(model, config, device=device, logger=logger)
+        
+        # Запускаем curriculum обучение
+        curriculum_results = trainer.train_curriculum(
+            train_loader, val_loader,
+            start_stage=args.curriculum_stage if args.curriculum_stage else 1,
+            resume_from=args.resume_from
+        )
+        
+        # Используем последний checkpoint как лучшую модель
+        if trainer.stage_checkpoints:
+            best_model_path = Path(trainer.stage_checkpoints[-1])
+            logger.info(f"✅ Curriculum обучение завершено. Лучшая модель: {best_model_path}")
+        
+    elif config.get('staged_training', {}).get('enabled', False):
         logger.info("🎯 Используется поэтапное обучение (StagedTrainer)")
         from training.staged_trainer import StagedTrainer
         trainer = StagedTrainer(model, config, device=device)
@@ -871,7 +1277,7 @@ def main():
     parser.add_argument('--config', type=str, default='config/config.yaml',
                        help='Путь к файлу конфигурации')
     parser.add_argument('--mode', type=str, default='full',
-                       choices=['data', 'train', 'backtest', 'full', 'demo', 'interactive', 'production', 'inference', 'validate', 'monitor'],
+                       choices=['data', 'train', 'backtest', 'full', 'demo', 'interactive', 'production', 'inference', 'validate', 'monitor', 'staged'],
                        help='Режим работы')
     parser.add_argument('--model-path', type=str, default=None,
                        help='Путь к сохраненной модели (для режима backtest)')
@@ -897,16 +1303,31 @@ def main():
                        help='Коэффициент веса для крупных движений цены (1.0 = без веса)')
     parser.add_argument('--min-movement-threshold', type=float, default=0.005,
                        help='Минимальный порог движения для торговых сигналов (0.5%)')
-    parser.add_argument('--production', action='store_true',
-                       help='Использовать production конфигурацию (config_production.yaml)')
     parser.add_argument('--checkpoint', type=str, default=None,
                        help='Путь к checkpoint для fine-tuning (например: models_saved/best_model_20250710_150018.pth)')
+    
+    # Новые аргументы для иерархической модели и curriculum learning
+    parser.add_argument('--model-type', type=str, default='unified',
+                       choices=['unified', 'hierarchical'],
+                       help='Тип модели: unified (UnifiedPatchTST)')
+    parser.add_argument('--curriculum-stage', type=int, default=0,
+                       choices=[0, 1, 2, 3, 4, 5],
+                       help='Этап curriculum learning (0 = без curriculum, 1-5 = этапы)')
+    parser.add_argument('--task-focus', type=str, default=None,
+                       choices=['market_regime', 'direction', 'targets', 'risk', 'all'],
+                       help='Фокус задачи для curriculum learning')
+    parser.add_argument('--use-focal-loss', action='store_true',
+                       help='Использовать Focal Loss для несбалансированных классов')
+    parser.add_argument('--class-weights', type=str, default=None,
+                       help='Веса классов в формате "[w1,w2,w3]" для LONG,SHORT,FLAT')
+    parser.add_argument('--resume-from', type=str, default=None,
+                       help='Путь к checkpoint для продолжения curriculum обучения')
     
     args = parser.parse_args()
     
     # Определяем production режим и загружаем конфигурацию
-    is_production_mode = args.production or args.mode in ['production', 'inference', 'validate']
-    
+    is_production_mode = args.mode in ['production', 'inference', 'validate']
+
     if is_production_mode:
         # Используем ProductionConfig для production режимов
         config_manager = ProductionConfig(args.config, production_mode=True)
@@ -961,7 +1382,7 @@ def main():
     logger.info("🚀 Запуск Crypto AI Trading System")
     logger.info(f"📋 Режим: {args.mode}")
     logger.info(f"⚙️ Конфигурация: {args.config}")
-    if args.production or args.mode == 'production':
+    if args.mode == 'production':
         logger.info("🏭 PRODUCTION MODE - Оптимизированные настройки для финального обучения")
         logger.info("📊 Особенности production режима:")
         logger.info("   - Уменьшенный batch size (512) для стабильности")
@@ -1067,7 +1488,7 @@ def main():
                     logger.error("Или используйте флаг --prepare-data для автоматического запуска")
                     return
         
-        if args.mode in ['train', 'full', 'production']:
+        if args.mode in ['train', 'full', 'production', 'staged']:
             # Проверяем, нужно ли делать fine-tuning
             if config_updated.get('fine_tuning', {}).get('enabled', False) and args.checkpoint:
                 logger.info("🎯 Fine-tuning режим активирован")
@@ -1101,7 +1522,7 @@ def main():
                     # Save best model
                     if val_metrics['loss'] < best_val_loss:
                         best_val_loss = val_metrics['loss']
-                        model_path = fine_tuner.save_checkpoint(epoch, val_metrics, is_best=True)
+                        model_path = fine_tuner._save_checkpoint(epoch, val_metrics['loss'], is_best=True)
                     
                     logger.info(f"Epoch {epoch+1}/{fine_tuning_epochs} - "
                               f"Train Loss: {train_metrics['loss']:.4f}, "
@@ -1110,9 +1531,157 @@ def main():
                 
                 model = fine_tuner.model
                 
+            elif args.mode == 'staged':
+                # Поэтапное обучение - ИСПРАВЛЕНО: используем подготовленные данные
+                logger.info("🎯 Запуск поэтапного обучения (staged mode)...")
+                
+                # Загружаем кэшированные данные
+                train_data, val_data, test_data, feature_cols, target_cols = load_cached_data_if_exists(logger)
+                
+                if train_data is None:
+                    logger.error("❌ Кэшированные данные не найдены!")
+                    logger.error("   Сначала запустите: python prepare_trading_data.py --test")
+                    return
+                
+                # Создаем DataLoader'ы
+                try:
+                    train_loader, val_loader, test_loader, config_updated = create_unified_data_loaders(
+                        train_data, val_data, test_data, feature_cols, target_cols, config_updated, logger
+                    )
+                    logger.info("✅ DataLoader'ы созданы для staged обучения")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка создания DataLoader'ов: {e}")
+                    return
+                
+                # Запуск поэтапного обучения
+                staged_manager = StagedTrainingManager(config_updated, logger)
+                model, best_metrics = staged_manager.run_staged_training(train_loader, val_loader, test_loader)
+                
+                # Сохраняем лучшую модель
+                if model is not None:
+                    model_path = 'models_saved/best_staged_model.pth'
+                    torch.save({
+                        'model_state_dict': model.state_dict(),
+                        'config': staged_manager.best_config if hasattr(staged_manager, 'best_config') and staged_manager.best_config else config_updated,
+                        'metrics': best_metrics,
+                        'training_mode': 'staged'
+                    }, model_path)
+                    logger.info(f"💾 Staged модель сохранена: {model_path}")
+                else:
+                    logger.error("❌ Staged обучение не вернуло модель!")
+                    return
+                
+                
+                # РЕЗЕРВ: старый код для fallback
+                if train_loader is None or val_loader is None or test_loader is None:
+                    logger.info("📊 Загрузка данных для поэтапного обучения...")
+                    
+                    # Сначала загружаем данные из файлов
+                    import pandas as pd
+                    from pathlib import Path
+                    
+                    data_dir = Path("data/processed")
+                    if not data_dir.exists():
+                        logger.error(f"❌ Директория {data_dir} не найдена. Сначала запустите: python prepare_trading_data.py")
+                        return
+                    
+                    # Загружаем подготовленные данные
+                    try:
+                        logger.info("📂 Загрузка train_data.parquet...")
+                        train_data = pd.read_parquet(data_dir / "train_data.parquet")
+                        logger.info(f"   - Train: {len(train_data):,} записей")
+                        
+                        logger.info("📂 Загрузка val_data.parquet...")
+                        val_data = pd.read_parquet(data_dir / "val_data.parquet")
+                        logger.info(f"   - Val: {len(val_data):,} записей")
+                        
+                        logger.info("📂 Загрузка test_data.parquet...")
+                        test_data = pd.read_parquet(data_dir / "test_data.parquet")
+                        logger.info(f"   - Test: {len(test_data):,} записей")
+                        
+                        # Загружаем списки признаков из текстовых файлов
+                        # Поддержка двух форматов: с нумерацией (123→column) и без
+                        with open(data_dir / "feature_cols.txt", "r") as f:
+                            lines = f.readlines()
+                            feature_cols = []
+                            for line in lines:
+                                line = line.strip()
+                                if not line:  # Пропускаем пустые строки
+                                    continue
+                                # Проверяем формат с нумерацией "123→column_name"
+                                if '→' in line:
+                                    col_name = line.split('→')[1].strip()
+                                else:
+                                    # Простой формат - просто имя колонки
+                                    col_name = line
+                                if col_name:  # Добавляем непустые имена
+                                    feature_cols.append(col_name)
+                                        
+                        with open(data_dir / "target_cols.txt", "r") as f:
+                            lines = f.readlines()
+                            target_cols = []
+                            for line in lines:
+                                line = line.strip()
+                                if not line:  # Пропускаем пустые строки
+                                    continue
+                                # Проверяем формат с нумерацией "123→column_name"
+                                if '→' in line:
+                                    col_name = line.split('→')[1].strip()
+                                else:
+                                    # Простой формат - просто имя колонки
+                                    col_name = line
+                                if col_name:  # Добавляем непустые имена
+                                    target_cols.append(col_name)
+                            
+                        logger.info(f"📊 Признаки: {len(feature_cols)} входных, {len(target_cols)} целевых")
+                        
+                        # Создаем DataLoaders
+                        from data.precomputed_dataset import create_precomputed_data_loaders
+                        train_loader, val_loader, test_loader = create_precomputed_data_loaders(
+                            train_data=train_data,
+                            val_data=val_data, 
+                            test_data=test_data,
+                            config=config_updated,
+                            feature_cols=feature_cols,
+                            target_cols=target_cols
+                        )
+                        
+                        if train_loader is None:
+                            logger.error("❌ Не удалось создать DataLoader'ы")
+                            return
+                        
+                        logger.info(f"✅ DataLoader'ы созданы:")
+                        logger.info(f"   - Train: {len(train_loader)} батчей")
+                        logger.info(f"   - Val: {len(val_loader)} батчей")
+                        logger.info(f"   - Test: {len(test_loader)} батчей")
+                        
+                    except FileNotFoundError as e:
+                        logger.error(f"❌ Файл не найден: {e}")
+                        logger.error("Сначала запустите: python prepare_trading_data.py")
+                        return
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка загрузки данных: {e}")
+                        return
+                
+                staged_manager = StagedTrainingManager(config_updated, logger)
+                model, best_metrics = staged_manager.run_staged_training(train_loader, val_loader, test_loader)
+                
+                # Сохраняем лучшую модель
+                if model is not None:
+                    model_path = 'models_saved/best_staged_model.pth'
+                    torch.save({
+                        'model_state_dict': model.state_dict(),
+                        # Сохраняем конфиг лучшего этапа, если он доступен
+                        'config': staged_manager.best_config if hasattr(staged_manager, 'best_config') and staged_manager.best_config else config_updated,
+                        'metrics': best_metrics,
+                        'training_mode': 'staged'
+                    }, model_path)
+                    logger.info(f"💾 Модель сохранена: {model_path}")
             else:
                 # Обычное обучение модели с унифицированной конфигурацией
-                model, model_path, train_loader = train_model(config_updated, train_loader, val_loader, logger)
+                model, model_path, train_loader = train_model(config_updated, train_loader, val_loader, logger, 
+                                                               model_type=args.model_type if hasattr(args, 'model_type') else 'unified',
+                                                               args=args)
         
         if args.mode in ['backtest', 'full']:
             if args.mode == 'backtest':
@@ -1123,17 +1692,41 @@ def main():
                 logger.info(f"📥 Загрузка модели: {args.model_path}")
                 
                 # Загрузка модели
-                checkpoint = torch.load(args.model_path, map_location='cuda' if torch.cuda.is_available() else 'cpu')
+                checkpoint = torch.load(args.model_path, map_location='cuda' if torch.cuda.is_available() else 'cpu', weights_only=False)
                 
-                # Создание модели с конфигурацией
-                from models.patchtst_unified import UnifiedPatchTSTForTrading
-                model = UnifiedPatchTSTForTrading(config_updated)
+                # Создание модели с конфигурацией из checkpoint
+                from models.patchtst_unified import UnifiedPatchTST
+                
+                # Всегда используем конфигурацию из checkpoint для backtest
+                if 'config' in checkpoint:
+                    checkpoint_config = checkpoint['config']['model']
+                    # КРИТИЧНО: Обновляем input_size из checkpoint
+                    if 'input_size' in checkpoint_config:
+                        checkpoint_config['input_size'] = checkpoint_config.get('input_size', 248)
+                    else:
+                        checkpoint_config['input_size'] = 248  # Используем полный набор признаков после feature engineering
+                    
+                    logger.info(f"🔧 Используем конфигурацию из checkpoint: input_size={checkpoint_config['input_size']}")
+                    
+                    # Добавляем недостающие поля для совместимости
+                    if 'seq_len' not in checkpoint_config:
+                        checkpoint_config['seq_len'] = checkpoint_config.get('context_window', 96)
+                    
+                    # Обновляем config_updated для совместимости с DataLoader'ами
+                    config_updated['model'] = checkpoint_config
+                    
+                    model = UnifiedPatchTST(checkpoint_config)
+                else:
+                    # В старых checkpoint'ах нет конфигурации - используем текущую с правильным input_size
+                    logger.warning("⚠️ В checkpoint нет конфигурации! Используем текущую конфигурацию с input_size=248...")
+                    config_updated['model']['input_size'] = 248  # Используем полный набор признаков после feature engineering
+                    model = UnifiedPatchTST(config_updated['model'])
                 
                 # Загрузка весов
                 if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
+                    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
                 else:
-                    model.load_state_dict(checkpoint)
+                    model.load_state_dict(checkpoint, strict=False)
                 
                 model.eval()
                 logger.info("✅ Модель загружена успешно")
@@ -1198,10 +1791,10 @@ def main():
             logger.info("🔍 Запуск валидации модели...")
             
             # Загружаем модель
-            from models.patchtst_unified import create_unified_model
-            model = create_unified_model(config)
+            from models.patchtst_unified import create_model as create_unified_model
+            model = create_unified_model(config['model'])
             
-            checkpoint = torch.load(args.model_path)
+            checkpoint = torch.load(args.model_path, weights_only=False)
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
                 model.load_state_dict(checkpoint['model_state_dict'])
             else:

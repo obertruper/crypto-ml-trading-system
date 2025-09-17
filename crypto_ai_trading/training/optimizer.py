@@ -81,9 +81,28 @@ def get_scheduler(scheduler_name: str,
     elif scheduler_name == 'CosineAnnealingLR':
         kwargs.setdefault('T_max', 100)
         kwargs.setdefault('eta_min', 1e-6)
+    elif scheduler_name == 'CosineAnnealingWarmRestarts':
+        # Для CosineAnnealingWarmRestarts оставляем только валидные параметры
+        valid_params = {'T_0', 'T_mult', 'eta_min', 'last_epoch', 'verbose'}
+        kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
+        kwargs.setdefault('T_0', 10)
+        kwargs.setdefault('T_mult', 1)
+        kwargs.setdefault('eta_min', 1e-6)
     elif scheduler_name == 'OneCycleLR':
         kwargs.setdefault('max_lr', 0.1)
         kwargs.setdefault('total_steps', 1000)
+    elif scheduler_name == 'ReduceLROnPlateau':
+        # ReduceLROnPlateau имеет специальный параметр mode
+        valid_params = {'mode', 'factor', 'patience', 'threshold', 'threshold_mode', 
+                       'cooldown', 'min_lr', 'eps', 'verbose'}
+        kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
+    elif scheduler_name in ['CyclicLR', 'LinearWarmup', 'CosineWarmup']:
+        # Эти планировщики имеют свои специфические параметры
+        pass
+    else:
+        # Для остальных планировщиков удаляем параметры, которые могут быть только у ReduceLROnPlateau
+        reduce_lr_only_params = {'mode', 'factor', 'cooldown', 'threshold', 'threshold_mode'}
+        kwargs = {k: v for k, v in kwargs.items() if k not in reduce_lr_only_params}
     
     return schedulers[scheduler_name](optimizer, **kwargs)
 
@@ -106,6 +125,10 @@ class RAdam(optim.Optimizer):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         
         super(RAdam, self).__init__(params, defaults)
+        
+        # Добавляем недостающие атрибуты для совместимости с PyTorch 2.0+
+        self._optimizer_step_pre_hooks = {}
+        self._optimizer_step_post_hooks = {}
 
     def __setstate__(self, state):
         super(RAdam, self).__setstate__(state)
@@ -189,6 +212,14 @@ class Lookahead(optim.Optimizer):
         
         for group in self.param_groups:
             group['counter'] = 0
+        
+        # Добавляем недостающие атрибуты для совместимости с PyTorch 2.0+
+        self._optimizer_step_pre_hooks = {}
+        self._optimizer_step_post_hooks = {}
+    
+    def zero_grad(self, set_to_none: bool = True):
+        """Обнуление градиентов"""
+        self.optimizer.zero_grad(set_to_none=set_to_none)
 
     def update(self, group, slow_weights):
         """Update the slow weights"""
@@ -258,6 +289,10 @@ class Ranger(optim.Optimizer):
         self.param_groups = self.optimizer.param_groups
         self.state = self.optimizer.state
         self.defaults = self.optimizer.defaults
+        
+        # Добавляем недостающие атрибуты для совместимости с PyTorch 2.0+
+        self._optimizer_step_pre_hooks = {}
+        self._optimizer_step_post_hooks = {}
     
     def step(self, closure=None):
         return self.optimizer.step(closure)
@@ -267,6 +302,10 @@ class Ranger(optim.Optimizer):
     
     def load_state_dict(self, state_dict):
         self.optimizer.load_state_dict(state_dict)
+    
+    def zero_grad(self, set_to_none: bool = True):
+        """Обнуление градиентов"""
+        self.optimizer.zero_grad(set_to_none=set_to_none)
 
 
 class LinearWarmupScheduler(_LRScheduler):

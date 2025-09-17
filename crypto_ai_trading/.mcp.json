@@ -4,8 +4,24 @@
   "servers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "env": {
+        "FILESYSTEM_BASE_PATH": "/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading"
+      },
       "description": "Файловая система проекта"
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "postgresql://ruslan:VikaSveta0910@localhost:5555/crypto_trading"
+      },
+      "description": "PostgreSQL база данных для криптотрейдинга"
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "description": "Последовательное мышление для анализа сложных торговых стратегий"
     },
     "memory": {
       "command": "npx",

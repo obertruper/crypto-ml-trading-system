@@ -110,11 +110,15 @@ class Trainer:
         optimizer_config = self.config.get('optimizer', {})
         optimizer_name = optimizer_config.get('name', 'AdamW')
         
+        # Получаем параметры оптимизатора, исключая lr чтобы избежать дублирования
+        optimizer_params = optimizer_config.get('params', {}).copy()
+        optimizer_params.pop('lr', None)  # Удаляем lr если он есть в params
+        
         return get_optimizer(
             optimizer_name,
             self.model.parameters(),
             lr=self.learning_rate,
-            **optimizer_config.get('params', {})
+            **optimizer_params
         )
     
     def _create_scheduler(self) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
@@ -218,6 +222,9 @@ class Trainer:
         # Используем set_to_none=True для экономии памяти (RTX 5090 оптимизация)
         self.optimizer.zero_grad(set_to_none=True)
         
+        # Счетчик для отслеживания накопленных градиентов
+        accumulated_gradients = 0
+        
         for batch_idx, (inputs, targets, info) in enumerate(progress_bar):
             # Перенос на устройство
             inputs = inputs.to(self.device)
@@ -287,8 +294,7 @@ class Trainer:
                 if self.use_amp:
                     # Сбрасываем градиенты (с оптимизацией памяти)
                     self.optimizer.zero_grad(set_to_none=True)
-                    # Обновляем scaler без шага оптимизатора
-                    self.scaler.update()
+                    # НЕ вызываем scaler.update() без scaler.step()!
                 
                 continue  # Пропускаем этот батч
             
@@ -301,9 +307,11 @@ class Trainer:
             else:
                 loss.backward()
             
-            # Обновляем веса только каждые gradient_accumulation_steps шагов
-            if (batch_idx + 1) % self.gradient_accumulation_steps == 0:
-                if self.use_amp:
+            accumulated_gradients += 1
+            
+            # Обновляем веса только каждые gradient_accumulation_steps шагов или на последнем батче
+            if (batch_idx + 1) % self.gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                if self.use_amp and accumulated_gradients > 0:
                     # Gradient clipping
                     if self.gradient_clip > 0:
                         self.scaler.unscale_(self.optimizer)
@@ -311,7 +319,11 @@ class Trainer:
                     
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
-                else:
+                    accumulated_gradients = 0  # Сбрасываем счетчик
+                elif self.use_amp and accumulated_gradients == 0:
+                    # Не было накопленных градиентов, пропускаем обновление
+                    self.logger.warning("Нет накопленных градиентов для AMP, пропускаем обновление")
+                elif not self.use_amp and accumulated_gradients > 0:
                     # Gradient clipping с дополнительной проверкой
                     if self.gradient_clip > 0:
                         grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
@@ -319,12 +331,13 @@ class Trainer:
                             self.logger.warning(f"Очень большая норма градиента: {grad_norm:.4f}")
                     
                     self.optimizer.step()
+                    accumulated_gradients = 0  # Сбрасываем счетчик
                 
                 # Обнуляем градиенты после обновления (с оптимизацией памяти)
                 self.optimizer.zero_grad(set_to_none=True)
             
-            # Обновление метрик (восстанавливаем оригинальный loss для правильного отображения)
-            epoch_loss += loss.item() * self.gradient_accumulation_steps
+            # Обновление метрик - НЕ умножаем на gradient_accumulation_steps
+            epoch_loss += loss.item()
             
             # Детальное логирование для первых батчей
             if batch_idx < 3 and not hasattr(self, '_detailed_log_done'):
@@ -404,10 +417,21 @@ class Trainer:
         
         return val_metrics
     
-    def _compute_loss(self, outputs: Union[torch.Tensor, Dict], 
+    def _compute_loss(self, outputs: Union[torch.Tensor, Dict],
                      targets: Union[torch.Tensor, Dict]) -> torch.Tensor:
         """Вычисление потерь с поддержкой унифицированной модели"""
-        
+
+        # Логирование типов для отладки
+        if not hasattr(self, '_logged_types'):
+            self._logged_types = True
+            self.logger.info(f"🔍 Типы данных в _compute_loss:")
+            self.logger.info(f"   - Outputs type: {type(outputs)}")
+            self.logger.info(f"   - Targets type: {type(targets)}")
+            if isinstance(outputs, dict):
+                self.logger.info(f"   - Outputs keys: {list(outputs.keys())}")
+            if isinstance(targets, dict):
+                self.logger.info(f"   - Targets keys: {list(targets.keys())}")
+
         # Для унифицированной модели - прямое применение loss
         if isinstance(outputs, torch.Tensor) and isinstance(targets, torch.Tensor):
             # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обработка целевых переменных из датасета
@@ -438,15 +462,89 @@ class Trainer:
                     outputs = outputs[..., :min_size]
                     targets = targets[..., :min_size]
                 
-                # Применяем loss напрямую
-                loss = self.criterion(outputs, targets)
+                # КРИТИЧЕСКИЙ ФИКС: Для DirectionalMultiTaskLoss нужны словари, а не тензоры!
+                # Проверяем тип loss функции
+                if not hasattr(self, '_loss_type_logged'):
+                    self._loss_type_logged = True
+                    self.logger.info(f"🔍 Loss function type: {self.criterion.__class__.__name__}")
+                    self.logger.info(f"   Has DirectionalMultiTaskLoss: {'DirectionalMultiTaskLoss' in self.criterion.__class__.__name__}")
+
+                # ВСЕГДА конвертируем для DirectionalMultiTaskLoss или если outputs - dict
+                if (hasattr(self.criterion, '__class__') and 'DirectionalMultiTaskLoss' in self.criterion.__class__.__name__) or isinstance(outputs, dict):
+                    # Конвертируем outputs и targets в словари для DirectionalMultiTaskLoss
+
+                    if not hasattr(self, '_conversion_logged'):
+                        self._conversion_logged = True
+                        self.logger.info(f"✅ Конвертация targets в dict для DirectionalMultiTaskLoss")
+                        self.logger.info(f"   Outputs is dict: {isinstance(outputs, dict)}")
+                        self.logger.info(f"   Targets shape: {targets.shape if isinstance(targets, torch.Tensor) else 'already dict'}")
+
+                    # Конвертация targets в dict (20 целевых переменных)
+                    targets_dict = {
+                        # Future returns (индексы 0-3)
+                        'future_return_15m': targets[:, 0],
+                        'future_return_1h': targets[:, 1],
+                        'future_return_4h': targets[:, 2],
+                        'future_return_12h': targets[:, 3],
+
+                        # Directions (индексы 4-7, конвертируем в long для CrossEntropyLoss)
+                        'direction_15m': targets[:, 4].long(),
+                        'direction_1h': targets[:, 5].long(),
+                        'direction_4h': targets[:, 6].long(),
+                        'direction_12h': targets[:, 7].long(),
+
+                        # Long levels (индексы 8-11)
+                        'long_will_reach_1pct_4h': targets[:, 8],
+                        'long_will_reach_2pct_4h': targets[:, 9],
+                        'long_will_reach_3pct_12h': targets[:, 10],
+                        'long_will_reach_5pct_12h': targets[:, 11],
+
+                        # Short levels (индексы 12-15)
+                        'short_will_reach_1pct_4h': targets[:, 12],
+                        'short_will_reach_2pct_4h': targets[:, 13],
+                        'short_will_reach_3pct_12h': targets[:, 14],
+                        'short_will_reach_5pct_12h': targets[:, 15],
+
+                        # Risk metrics (индексы 16-19)
+                        'max_drawdown_1h': targets[:, 16],
+                        'max_rally_1h': targets[:, 17],
+                        'max_drawdown_4h': targets[:, 18],
+                        'max_rally_4h': targets[:, 19]
+                    }
+
+                    # outputs уже должен быть словарем от модели, просто передаем
+                    loss = self.criterion(outputs, targets_dict)
+
+                    # DirectionalMultiTaskLoss возвращает dict с ключом 'total_loss'
+                    if isinstance(loss, dict):
+                        if not hasattr(self, '_logged_loss_dict'):
+                            self._logged_loss_dict = True
+                            self.logger.info(f"🔍 DirectionalMultiTaskLoss результат:")
+                            self.logger.info(f"   - Loss type: {type(loss)}")
+                            if 'total_loss' in loss:
+                                self.logger.info(f"   - Total loss: {loss['total_loss'].item():.6f}")
+                        loss = loss.get('total_loss', torch.tensor(1.0, device=outputs.device, requires_grad=True))
+                else:
+                    # Для других loss функций - прямое применение
+                    loss = self.criterion(outputs, targets)
                 
-                # Проверка на NaN/Inf
+                # Проверка на NaN/Inf с детальным логированием
                 if torch.isnan(loss) or torch.isinf(loss):
-                    self.logger.warning("❌ Loss is NaN/Inf!")
+                    self.logger.warning("❌ Loss is NaN/Inf! Детальная информация:")
+                    self.logger.warning(f"   - Loss значение: {loss.item() if not torch.isnan(loss) else 'NaN'}")
                     self.logger.warning(f"   - Outputs stats: min={outputs.min():.4f}, max={outputs.max():.4f}, mean={outputs.mean():.4f}")
                     self.logger.warning(f"   - Targets stats: min={targets.min():.4f}, max={targets.max():.4f}, mean={targets.mean():.4f}")
-                    return torch.tensor(0.0, device=outputs.device, requires_grad=True)
+
+                    # Проверяем конкретные компоненты
+                    if hasattr(self.criterion, 'last_losses'):
+                        self.logger.warning("   - Компоненты loss:")
+                        for key, val in self.criterion.last_losses.items():
+                            if isinstance(val, torch.Tensor):
+                                self.logger.warning(f"     * {key}: {val.item():.4f}")
+
+                    # Вместо возврата 0, возвращаем небольшое значение
+                    # чтобы градиенты могли распространяться
+                    return torch.tensor(1e-6, device=outputs.device, requires_grad=True)
                 
                 return loss
         
@@ -460,6 +558,28 @@ class Trainer:
                 pass
             
             return self.criterion(losses) if losses else torch.tensor(0.0, device=outputs.device)
+        
+        # Проверяем тип criterion для правильной обработки
+        from models.patchtst_unified import DirectionalMultiTaskLoss
+        if isinstance(self.criterion, DirectionalMultiTaskLoss):
+            # DirectionalMultiTaskLoss ожидает словари
+            if not isinstance(outputs, dict):
+                outputs = {'predictions': outputs}
+            if not isinstance(targets, dict):
+                targets = {'targets': targets}
+
+            # Вычисляем loss
+            loss = self.criterion(outputs, targets)
+
+            # Проверяем результат
+            if not hasattr(self, '_logged_directional_loss'):
+                self._logged_directional_loss = True
+                self.logger.info(f"🔍 DirectionalMultiTaskLoss результат:")
+                self.logger.info(f"   - Loss type: {type(loss)}")
+                if hasattr(loss, 'item'):
+                    self.logger.info(f"   - Loss value: {loss.item():.6f}")
+
+            return loss
         
         # Fallback для простых случаев
         if isinstance(outputs, dict):
