@@ -482,22 +482,8 @@ class UnifiedPatchTSTForTrading(nn.Module):
         # Порог уверенности должен применяться ТОЛЬКО при инференсе/торговле
 
         # Получаем максимальные вероятности для каждого предсказания
-        max_probs, _ = torch.max(direction_probs, dim=-1)  # (B, 4)
-
-        # Применяем порог ТОЛЬКО в режиме eval (не при обучении)
-        if not self.training:
-            confidence_threshold = self.config.get('model', {}).get('direction_confidence_threshold', 0.5)
-            low_confidence_mask = max_probs < confidence_threshold
-
-            # Применяем маску только если есть хоть одно неуверенное предсказание
-            if low_confidence_mask.any():
-                directions[low_confidence_mask] = 2.0  # FLAT = 2
-
-                # Логирование для отладки (только в первый раз)
-                if not hasattr(self, '_confidence_logged'):
-                    self._confidence_logged = True
-                    n_low_confidence = low_confidence_mask.sum().item()
-                    self.logger.info(f"🎯 [EVAL MODE] Порог уверенности {confidence_threshold}: {n_low_confidence} предсказаний изменены на FLAT")
+        # Удалена вся логика confidence_threshold - она вызывала коллапс модели
+        # Модель теперь предсказывает классы напрямую без фильтрации по уверенности
         
         # Предсказываем уверенность для каждого таймфрейма
         confidence_scores = self.confidence_head(x_projected)  # (B, 4)
