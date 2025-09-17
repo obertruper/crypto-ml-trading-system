@@ -480,36 +480,47 @@ class Trainer:
                         self.logger.info(f"   Targets shape: {targets.shape if isinstance(targets, torch.Tensor) else 'already dict'}")
 
                     # Конвертация targets в dict (20 целевых переменных)
+                    future_returns = targets[:, 0:4]
+                    directions = targets[:, 4:8].long()
+                    long_levels = targets[:, 8:12]
+                    short_levels = targets[:, 12:16]
+                    risk_metrics = targets[:, 16:20]
+
                     targets_dict = {
                         # Future returns (индексы 0-3)
-                        'future_return_15m': targets[:, 0],
-                        'future_return_1h': targets[:, 1],
-                        'future_return_4h': targets[:, 2],
-                        'future_return_12h': targets[:, 3],
+                        'future_return_15m': future_returns[:, 0],
+                        'future_return_1h': future_returns[:, 1],
+                        'future_return_4h': future_returns[:, 2],
+                        'future_return_12h': future_returns[:, 3],
+                        'future_returns': future_returns,
 
-                        # Directions (индексы 4-7, конвертируем в long для CrossEntropyLoss)
-                        'direction_15m': targets[:, 4].long(),
-                        'direction_1h': targets[:, 5].long(),
-                        'direction_4h': targets[:, 6].long(),
-                        'direction_12h': targets[:, 7].long(),
+                        # Directions (индексы 4-7)
+                        'direction_15m': directions[:, 0],
+                        'direction_1h': directions[:, 1],
+                        'direction_4h': directions[:, 2],
+                        'direction_12h': directions[:, 3],
+                        'directions': directions,
 
                         # Long levels (индексы 8-11)
-                        'long_will_reach_1pct_4h': targets[:, 8],
-                        'long_will_reach_2pct_4h': targets[:, 9],
-                        'long_will_reach_3pct_12h': targets[:, 10],
-                        'long_will_reach_5pct_12h': targets[:, 11],
+                        'long_will_reach_1pct_4h': long_levels[:, 0],
+                        'long_will_reach_2pct_4h': long_levels[:, 1],
+                        'long_will_reach_3pct_12h': long_levels[:, 2],
+                        'long_will_reach_5pct_12h': long_levels[:, 3],
+                        'long_levels': long_levels,
 
                         # Short levels (индексы 12-15)
-                        'short_will_reach_1pct_4h': targets[:, 12],
-                        'short_will_reach_2pct_4h': targets[:, 13],
-                        'short_will_reach_3pct_12h': targets[:, 14],
-                        'short_will_reach_5pct_12h': targets[:, 15],
+                        'short_will_reach_1pct_4h': short_levels[:, 0],
+                        'short_will_reach_2pct_4h': short_levels[:, 1],
+                        'short_will_reach_3pct_12h': short_levels[:, 2],
+                        'short_will_reach_5pct_12h': short_levels[:, 3],
+                        'short_levels': short_levels,
 
                         # Risk metrics (индексы 16-19)
-                        'max_drawdown_1h': targets[:, 16],
-                        'max_rally_1h': targets[:, 17],
-                        'max_drawdown_4h': targets[:, 18],
-                        'max_rally_4h': targets[:, 19]
+                        'max_drawdown_1h': risk_metrics[:, 0],
+                        'max_rally_1h': risk_metrics[:, 1],
+                        'max_drawdown_4h': risk_metrics[:, 2],
+                        'max_rally_4h': risk_metrics[:, 3],
+                        'risk_metrics': risk_metrics
                     }
 
                     # outputs уже должен быть словарем от модели, просто передаем

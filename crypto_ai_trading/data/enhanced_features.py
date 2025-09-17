@@ -25,49 +25,60 @@ class EnhancedFeatureEngineer:
         """Определение рыночного режима"""
         self.logger.info("🏛️ Добавляем market regime features...")
         
+        def get_or_compute(column: str, compute_fn):
+            if column in df.columns:
+                return df[column]
+            df[column] = compute_fn()
+            return df[column]
+
         # 1. Trend Regime (Trending vs Ranging)
-        df['sma_20'] = df['close'].rolling(20).mean()
-        df['sma_50'] = df['close'].rolling(50).mean()
-        df['ema_20'] = df['close'].ewm(span=20).mean()
-        
-        # ADX для силы тренда
-        df['trend_strength'] = self._calculate_adx(df, period=14)
-        
+        sma_20 = get_or_compute('sma_20', lambda: df['close'].rolling(20).mean())
+        sma_50 = get_or_compute('sma_50', lambda: df['close'].rolling(50).mean())
+        ema_20 = get_or_compute('ema_20', lambda: df['close'].ewm(span=20).mean())
+
+        trend_strength = get_or_compute('adx', lambda: self._calculate_adx(df, period=14))
+        df['trend_strength'] = trend_strength
+
         # Классификация режима
         df['regime_trend'] = 0  # 0=Ranging, 1=Uptrend, 2=Downtrend
-        uptrend_mask = (df['ema_20'] > df['sma_50']) & (df['trend_strength'] > 25)
-        downtrend_mask = (df['ema_20'] < df['sma_50']) & (df['trend_strength'] > 25)
+        uptrend_mask = (ema_20 > sma_50) & (trend_strength > 25)
+        downtrend_mask = (ema_20 < sma_50) & (trend_strength > 25)
         df.loc[uptrend_mask, 'regime_trend'] = 1
         df.loc[downtrend_mask, 'regime_trend'] = 2
-        
+
         # 2. Volatility Regime
-        df['volatility_20'] = df['close'].pct_change().rolling(20).std()
-        df['volatility_50'] = df['close'].pct_change().rolling(50).std()
-        df['volatility_ratio'] = df['volatility_20'] / df['volatility_50'].replace(0, 1)
-        
+        vol_20 = get_or_compute('volatility_20', lambda: df['close'].pct_change().rolling(20).std())
+        vol_50 = get_or_compute('volatility_50', lambda: df['close'].pct_change().rolling(50).std())
+        df['regime_volatility_ratio'] = vol_20 / vol_50.replace(0, 1)
+        if 'volatility_ratio' not in df.columns:
+            df['volatility_ratio'] = df['regime_volatility_ratio']
+
         # Классификация волатильности
-        df['regime_volatility'] = pd.qcut(df['volatility_ratio'], q=3, labels=[0, 1, 2])  # Low, Medium, High
-        
+        df['regime_volatility'] = pd.qcut(df['regime_volatility_ratio'], q=3, labels=[0, 1, 2])  # Low, Medium, High
+
         # 3. Volume Regime
-        df['volume_ma_20'] = df['volume'].rolling(20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_ma_20'].replace(0, 1)
-        
+        volume_ma_20 = get_or_compute('volume_ma_20', lambda: df['volume'].rolling(20).mean())
+        volume_ratio = df['volume'] / volume_ma_20.replace(0, 1)
+        if 'volume_ratio' not in df.columns:
+            df['volume_ratio'] = volume_ratio
+        df['regime_volume_ratio'] = volume_ratio
+
         # Volume spike detection
-        df['volume_spike'] = (df['volume_ratio'] > 2.0).astype(int)
-        
+        df['volume_spike'] = (volume_ratio > 2.0).astype(int)
+
         # 4. Wyckoff Phases
         df = self._identify_wyckoff_phases(df)
-        
+
         # 5. Market Structure
         df['higher_highs'] = (df['high'] > df['high'].shift(1)).astype(int)
         df['higher_lows'] = (df['low'] > df['low'].shift(1)).astype(int)
         df['market_structure'] = df['higher_highs'].rolling(10).sum() + df['higher_lows'].rolling(10).sum()
-        
+
         # 6. Momentum Regime
-        df['momentum_10'] = df['close'].pct_change(10)
-        df['momentum_20'] = df['close'].pct_change(20)
-        df['momentum_strength'] = df['momentum_10'] / df['momentum_20'].replace(0, 1)
-        
+        momentum_10 = get_or_compute('momentum_10', lambda: df['close'].pct_change(10))
+        momentum_20 = get_or_compute('momentum_20', lambda: df['close'].pct_change(20))
+        df['momentum_strength'] = momentum_10 / momentum_20.replace(0, 1)
+
         return df
     
     def add_microstructure_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -138,11 +149,13 @@ class EnhancedFeatureEngineer:
                 df[f'btc_correlation_{window}'] = correlation.values
             
             # 2. BTC как лидирующий индикатор
-            # Проверяем, предсказывает ли движение BTC наше движение
-            btc_future_return = btc_data['close'].pct_change().shift(-4)  # BTC через час
+            # Используем прошедшее движение BTC (лаг), чтобы избежать утечек данных
+            btc_lagged_return = btc_data['close'].pct_change().shift(4)  # BTC час назад
             current_return = current_data['close'].pct_change()
-            
-            lead_correlation = current_return.rolling(20).corr(btc_future_return.reindex(current_data.index, method='ffill'))
+
+            lead_correlation = current_return.rolling(20).corr(
+                btc_lagged_return.reindex(current_data.index, method='ffill')
+            )
             df['btc_lead_indicator'] = lead_correlation.values
             
             # 3. Divergence с BTC
