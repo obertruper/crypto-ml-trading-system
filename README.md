@@ -1,165 +1,229 @@
-# ML система прогнозирования криптовалютного рынка
+# Crypto AI Trading System
 
-Система машинного обучения для прогнозирования движения цен криптовалют на основе технических индикаторов и исторических данных.
+Advanced machine learning system for cryptocurrency trading using PatchTST architecture with multi-task learning for 20 target variables prediction.
 
-## 🚀 Быстрый старт
+## 🚀 Project Overview
 
-### 1. Установка зависимостей
+This repository contains a sophisticated cryptocurrency trading system that leverages:
+- **PatchTST Architecture**: State-of-the-art time series transformer
+- **Multi-Task Learning**: Simultaneous prediction of 20 target variables
+- **171 Technical Indicators**: Comprehensive feature engineering
+- **GPU Optimized**: Built for RTX 5090 with advanced optimizations
+
+## 📁 Project Structure
+
+```
+LLM TRANSFORM/
+└── crypto_ai_trading/       # Main trading system
+    ├── config/              # Configuration files
+    │   └── config.yaml     # Main configuration
+    ├── data/               # Data processing modules
+    │   ├── data_loader.py
+    │   ├── dataset.py
+    │   ├── feature_engineering.py
+    │   └── precomputed_dataset.py
+    ├── models/             # Model architecture
+    │   ├── patchtst_unified.py  # Main PatchTST model
+    │   ├── losses.py
+    │   └── components.py
+    ├── training/           # Training modules
+    │   ├── optimized_trainer.py
+    │   ├── optimizer.py
+    │   └── validator.py
+    ├── trading/            # Trading logic
+    │   ├── unified_backtester.py
+    │   ├── risk_manager.py
+    │   └── signals.py
+    ├── utils/              # Utilities
+    │   ├── logger.py
+    │   ├── metrics.py
+    │   └── visualization.py
+    ├── validation/         # Validation suite
+    │   └── comprehensive_validator.py
+    ├── main.py            # Main entry point
+    ├── README.md          # Project documentation
+    ├── CLAUDE.md          # Claude AI instructions
+    └── requirements.txt   # Dependencies
+```
+
+## 🎯 Key Features
+
+### Model Architecture
+- **UnifiedPatchTST**: Transformer-based model with patch embedding
+- **20 Target Variables**: Returns, directions, TP/SL levels, risk metrics
+- **Context Window**: 96 timesteps (24 hours on 15-min candles)
+- **Multi-Head Architecture**: Specialized heads for different prediction tasks
+
+### Technical Indicators (171 total)
+- **Trend**: EMA, SMA, ADX, MACD, Ichimoku, SAR, Aroon
+- **Oscillators**: RSI, Stochastic, CCI, Williams %R, MFI
+- **Volatility**: ATR, Bollinger Bands, Donchian, Keltner
+- **Volume**: OBV, CMF, VWAP, Volume Profile
+- **Patterns**: Candlestick patterns, support/resistance levels
+- **Microstructure**: Bid/ask spread, volume imbalance, flow toxicity
+
+### Performance Optimizations
+- **RTX 5090 Optimized**: Mixed precision (FP16), TF32 enabled
+- **Batch Size**: 8192 with gradient accumulation
+- **Speed**: 60,000+ samples/s on batches
+- **GPU Utilization**: 90-98% target utilization
+
+## 🚀 Quick Start
+
+### 1. Installation
+
 ```bash
+cd crypto_ai_trading
 pip install -r requirements.txt
 ```
 
-### 2. Настройка PostgreSQL
+### 2. Configuration
 
-Убедитесь, что PostgreSQL запущен на порту 5430 (или измените порт в `config.yaml`).
+Edit `config/config.yaml` to set:
+- Database connection (PostgreSQL port 5555)
+- GPU settings
+- Training parameters
+- Target symbols list
 
-Создайте базу данных и таблицы:
+### 3. Running the System
+
 ```bash
-python init_database.py
+# Full pipeline: data + training
+python main.py --mode full
+
+# Training only (if data is ready)
+python main.py --mode train
+
+# Data preparation only
+python main.py --mode data
+
+# Demo mode (10 symbols)
+python main.py --mode demo
+
+# Backtesting
+python main.py --mode backtest
+
+# Interactive menu
+python main.py --mode interactive
 ```
 
-### 3. Настройка конфигурации
+### 4. Monitoring
 
-Отредактируйте `config.yaml`:
-- Измените пароль PostgreSQL в секции `database`
-- Проверьте риск-профиль в секции `risk_profile`
-- Список монет уже настроен (51 криптовалюта)
-
-### 4. Запуск системы
-
-#### Шаг 1: Загрузка исторических данных
 ```bash
-python download_data.py
-```
-⏱️ Время выполнения: ~2-3 часа для всех монет
+# TensorBoard monitoring
+tensorboard --logdir logs/
 
-Для тестирования можно загрузить только Bitcoin:
-```python
-# В download_data.py раскомментируйте строку:
-results = {'BTCUSDT': downloader.download_historical_data('BTCUSDT', interval, days)}
-```
+# Real-time monitoring
+python monitor_training.py
 
-#### Шаг 2: Подготовка датасета
-```bash
-python prepare_dataset.py
-```
-⏱️ Время выполнения: ~30-60 минут
-
-#### Шаг 3: Обучение модели
-```bash
-python train_model_postgres.py
-```
-⏱️ Время выполнения: ~4-8 часов (зависит от GPU)
-
-## 📊 Архитектура системы
-
-### Модели
-Система обучает 4 модели для прогнозирования:
-- **buy_profit_model** - вероятность достижения +5.8% до -1.1%
-- **buy_loss_model** - вероятность достижения -1.1% до +5.8%
-- **sell_profit_model** - вероятность достижения -5.8% до +1.1%
-- **sell_loss_model** - вероятность достижения +1.1% до -5.8%
-
-### Технические индикаторы (60+)
-- Трендовые: EMA, ADX, MACD, Ichimoku, SAR
-- Осцилляторы: RSI, Stochastic, CCI, Williams %R
-- Объемные: OBV, CMF, MFI
-- Волатильность: ATR, Bollinger Bands, Donchian
-
-### База данных PostgreSQL
-```
-crypto_trading/
-├── raw_market_data         # Сырые OHLCV данные
-├── processed_market_data   # Данные с индикаторами
-├── model_metadata         # Метаданные моделей
-├── model_predictions      # Предсказания
-└── training_sequences     # Обучающие последовательности
+# GPU monitoring
+nvidia-smi -l 1
 ```
 
-## 🎯 Результаты
+## 📊 Target Variables (20)
 
-После обучения модель предсказывает:
-```python
-{
-    "buy_profit_probability": 0.78,   # 78% шанс профита для BUY
-    "buy_loss_probability": 0.22,     # 22% шанс убытка для BUY
-    "sell_profit_probability": 0.65,  # 65% шанс профита для SELL
-    "sell_loss_probability": 0.35     # 35% шанс убытка для SELL
-}
-```
+1. **Returns** (4): future_return_15m, 1h, 4h, 12h
+2. **Directions** (4): direction_15m, 1h, 4h, 12h (LONG/SHORT/FLAT)
+3. **LONG Levels** (4): will_reach_1%, 2%, 3%, 5% in 4h/12h
+4. **SHORT Levels** (4): equivalent for short positions
+5. **Risk Metrics** (2): max_drawdown, max_rally in 1h/4h
+6. **Trading Signals** (2): best_action, signal_strength
 
-## 📁 Структура проекта
-```
-project/
-├── config.yaml              # Конфигурация
-├── init_database.py         # Создание БД
-├── download_data.py         # Загрузка данных
-├── prepare_dataset.py       # Подготовка датасета
-├── train_model_postgres.py  # Обучение модели
-├── requirements.txt         # Зависимости
-├── trained_model/          # Сохраненные модели
-│   ├── buy_profit_model.h5
-│   ├── buy_loss_model.h5
-│   ├── sell_profit_model.h5
-│   ├── sell_loss_model.h5
-│   ├── scaler.pkl
-│   └── feature_columns.json
-└── plots/                  # Графики обучения
-```
+## 🔧 System Requirements
 
-## ⚙️ Требования
-- Python 3.8+
-- PostgreSQL 12+
-- 16GB+ RAM
-- GPU (опционально, но рекомендуется)
-- 50GB+ свободного места
+- **Python**: 3.10+
+- **PostgreSQL**: 14+ (port 5555)
+- **GPU**: NVIDIA RTX 3090+ (24GB+ VRAM recommended)
+- **RAM**: 32GB+
+- **Storage**: 100GB+ for data cache
+- **CUDA**: 12.1+
+- **PyTorch**: 2.2.0+
 
-## 🔧 Дополнительные настройки
+## 📈 Performance Metrics
 
-### Изменение риск-профиля
-В `config.yaml` измените параметры:
-```yaml
-risk_profile:
-  stop_loss_pct_buy: 0.989    # Ваш SL для BUY
-  take_profit_pct_buy: 1.058  # Ваш TP для BUY
-  stop_loss_pct_sell: 1.011   # Ваш SL для SELL
-  take_profit_pct_sell: 0.942 # Ваш TP для SELL
-```
+### Target Performance
+- **Win Rate**: 50-52% (optimal for crypto)
+- **F1 Score**: > 0.42
+- **Precision**: > 0.30
+- **Train Loss**: 1.41-1.42 (stable)
+- **Val Loss**: 1.34-1.35 (lower than train = good generalization)
 
-### Добавление новых монет
-Добавьте символы в `config.yaml`:
-```yaml
-data_download:
-  symbols:
-    - NEWUSDT
-```
+### Training Speed
+- **Samples/s**: 28,000-30,000 per epoch
+- **Batch Processing**: 60,000+ samples/s
+- **Epoch Time**: ~5-10 minutes (full dataset)
 
-## 📈 Мониторинг производительности
-Проверка статистики БД:
+## 🛠️ Development
+
+### Database Schema
+
 ```sql
-SELECT symbol, COUNT(*) FROM raw_market_data GROUP BY symbol;
-SELECT * FROM model_metadata ORDER BY created_at DESC;
+crypto_trading/
+├── raw_market_data         # Raw OHLCV data
+├── processed_market_data   # Data with indicators
+├── model_metadata          # Model metadata
+├── model_predictions       # Predictions
+└── training_sequences      # Training sequences
 ```
 
-## 🚨 Решение проблем
+### Adding New Features
 
-### Ошибка подключения к PostgreSQL
-```bash
-# Проверьте что PostgreSQL запущен
-pg_ctl status
+1. Update feature engineering in `data/feature_engineering.py`
+2. Modify config in `config/config.yaml`
+3. Retrain the model with new features
 
-# Проверьте порт в config.yaml (должен быть 5430)
+### Custom Trading Strategies
+
+Implement custom strategies in `trading/signals.py`:
+```python
+class CustomStrategy(BaseStrategy):
+    def generate_signals(self, predictions):
+        # Your strategy logic here
+        pass
 ```
 
-### Недостаточно памяти при обучении
-Уменьшите batch_size в `config.yaml`:
-```yaml
-model:
-  batch_size: 16  # вместо 32
-```
+## 🔍 Troubleshooting
 
-### Медленная загрузка данных
-Загрузите только несколько монет для начала, изменив список в `config.yaml`.
+### CUDA Pin Memory Error
+Fixed via custom_collate_fn in PrecomputedDataset
 
-## 📞 Поддержка
-При возникновении проблем создайте issue с описанием ошибки и логами.
+### RTX 5090 torch.compile Issue
+Disabled as sm_120 is not supported
+
+### Large Batch OOM
+Use gradient accumulation in config
+
+### Low Entropy Predictions
+Increase dropout, add label smoothing
+
+### Class Imbalance
+Use weighted loss function in config
+
+## 📝 License
+
+MIT License - see LICENSE file for details
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📞 Support
+
+For issues and questions:
+- Create an issue on GitHub
+- Check existing documentation in CLAUDE.md
+- Review config examples in config/config.yaml
+
+## 🚨 Disclaimer
+
+This system is for educational purposes. Cryptocurrency trading involves significant risk. Always do your own research and never invest more than you can afford to lose.
+
+---
+
+**Repository**: [github.com/obertruper/crypto-ml-trading-system](https://github.com/obertruper/crypto-ml-trading-system)
+
+**Last Updated**: September 2025
