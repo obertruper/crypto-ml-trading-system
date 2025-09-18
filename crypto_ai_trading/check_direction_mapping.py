@@ -98,7 +98,7 @@ def check_model_predictions():
     print("=" * 80)
 
     # Проверяем последнюю сохранённую модель
-    model_path = Path('/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading/models_saved')
+    model_path = Path('models_saved')
     best_model = model_path / 'best_model.pth'
 
     if not best_model.exists():
@@ -148,7 +148,7 @@ def check_config():
     print("=" * 80)
 
     import yaml
-    config_path = '/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading/config/config.yaml'
+    config_path = 'config/config.yaml'
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)

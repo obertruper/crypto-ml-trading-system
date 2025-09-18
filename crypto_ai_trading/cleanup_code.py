@@ -52,38 +52,36 @@ def find_duplicate_functions():
     """Найти дублирующиеся функции между файлами"""
     duplicates = {}
 
-    # Сравниваем StagedTrainingManager и StagedTrainer
-    print("\n📊 Сравнение StagedTrainingManager (main.py) и StagedTrainer (staged_trainer.py):")
+    print("\n📊 Сравнение Trainer (training/trainer.py) и OptimizedTrainer (training/optimized_trainer.py):")
     print("-" * 60)
 
-    # Методы в StagedTrainingManager
-    manager_methods = [
-        'get_stage_config',
-        'run_staged_training',
-        '_recursive_update'
-    ]
-
-    # Методы в StagedTrainer
     trainer_methods = [
-        '_create_stage_config',
-        'train',
-        '_configure_losses'
+        'train_epoch',
+        'validate',
+        '_create_optimizer',
+        '_create_scheduler'
     ]
 
-    print("StagedTrainingManager методы:")
-    for m in manager_methods:
-        print(f"  - {m}")
+    optimized_only = [
+        'AntiCollapseMonitor',
+        'apply_correction'
+    ]
 
-    print("\nStagedTrainer методы:")
+    print("Общие методы Trainer:")
     for m in trainer_methods:
         print(f"  - {m}")
 
+    print("\nСпецифика OptimizedTrainer:")
+    for m in optimized_only:
+        print(f"  - {m}")
+
     print("\n🔍 Анализ:")
-    print("- get_stage_config и _create_stage_config делают похожую работу")
-    print("- run_staged_training и train оба запускают поэтапное обучение")
-    print("⚠️ Рекомендация: удалить StagedTrainingManager и использовать только StagedTrainer")
+    print("- Основные циклы обучения схожи; OptimizedTrainer расширяет Trainer")
+    print("- Рекомендация: оставить один путь и использовать OptimizedTrainer как основной")
+    print("- Поэтапное обучение из main.py (StagedTrainingManager) стоит вынести или упростить")
 
     return duplicates
+
 
 def check_file_sizes():
     """Проверить размеры файлов"""
@@ -92,7 +90,6 @@ def check_file_sizes():
 
     files = [
         'main.py',
-        'training/staged_trainer.py',
         'training/optimized_trainer.py',
         'models/patchtst_unified.py',
         'data/feature_engineering.py'
@@ -161,7 +158,7 @@ def main():
     print("\n✅ РЕКОМЕНДАЦИИ:")
     print("-" * 60)
     print("1. Удалить StagedTrainingManager из main.py (строки 104-220)")
-    print("2. Заменить использование StagedTrainingManager на StagedTrainer")
+    print("2. Консолидировать Trainer и OptimizedTrainer в единый путь")
     print("3. Удалить тестовые файлы после проверки")
     print("4. Разделить main.py на модули:")
     print("   - data_preparation.py")

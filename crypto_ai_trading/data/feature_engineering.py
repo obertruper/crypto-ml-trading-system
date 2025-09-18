@@ -1290,6 +1290,9 @@ class FeatureEngineer:
     
     def _create_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Временные признаки"""
+        # Если уже активированы TemporalEmbeddings, не дублируем временные признаки
+        if getattr(self, 'temporal_embeddings', None) is not None:
+            return df
         df['hour'] = df['datetime'].dt.hour
         df['minute'] = df['datetime'].dt.minute
         

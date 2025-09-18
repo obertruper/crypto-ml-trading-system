@@ -17,7 +17,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 import sys
-sys.path.append('/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading')
+# Скрипт устарел: используйте evaluate_model_simple.py или evaluate_model_production.py
+print('⚠️ evaluate_model.py устарел. Используйте evaluate_model_simple.py или evaluate_model_production.py')
+sys.exit(0)
 
 from config.config_loader import ConfigLoader
 from models.patchtst_unified import UnifiedPatchTST

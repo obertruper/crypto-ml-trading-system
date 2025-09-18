@@ -13,7 +13,7 @@ def get_training_stats():
         # Читаем последние строки из training_log.txt
         result = subprocess.run(
             ['tail', '-1', 'training_log.txt'], 
-            capture_output=True, text=True, cwd='/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading'
+            capture_output=True, text=True, cwd=str(Path(__file__).parent)
         )
         if result.returncode == 0 and 'Training:' in result.stdout:
             # Парсим прогресс бар
@@ -37,7 +37,7 @@ def get_training_stats():
         # Альтернативный способ - из Trainer логов
         result = subprocess.run(
             ['tail', '-50', './experiments/logs/Trainer_20250701.log'], 
-            capture_output=True, text=True, cwd='/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading'
+            capture_output=True, text=True, cwd=str(Path(__file__).parent)
         )
         if result.returncode == 0:
             lines = result.stdout.strip().split('\n')

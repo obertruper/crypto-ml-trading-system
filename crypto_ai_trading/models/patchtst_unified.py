@@ -11,143 +11,8 @@ from typing import Dict, List, Optional, Tuple, Union
 import math
 
 # Импортируем из components.py вместо несуществующего patchtst.py
-from .components import PositionalEncoding
+from .components import PositionalEncoding, RevIN, PatchTSTEncoder
 # PatchEmbedding не найден, определим локально
-EINOPS_AVAILABLE = False
-
-
-class RevIN(nn.Module):
-    """Reversible Instance Normalization для временных рядов"""
-    
-    def __init__(self, num_features: int, eps: float = 1e-5, affine: bool = True):
-        super().__init__()
-        self.num_features = num_features
-        self.eps = eps
-        self.affine = affine
-        
-        if self.affine:
-            self.affine_weight = nn.Parameter(torch.ones(num_features))
-            self.affine_bias = nn.Parameter(torch.zeros(num_features))
-    
-    def forward(self, x: torch.Tensor, mode: str = 'norm') -> torch.Tensor:
-        """
-        x: [Batch, Length, Features]
-        mode: 'norm' для нормализации, 'denorm' для денормализации
-        """
-        if mode == 'norm':
-            self.mean = x.mean(dim=1, keepdim=True)
-            self.std = torch.sqrt(x.var(dim=1, keepdim=True) + self.eps)
-            x = (x - self.mean) / self.std
-            
-            if self.affine:
-                x = x * self.affine_weight + self.affine_bias
-        
-        elif mode == 'denorm':
-            if self.affine:
-                x = (x - self.affine_bias) / self.affine_weight
-                
-            x = x * self.std + self.mean
-            
-        return x
-
-
-class PatchTSTEncoder(nn.Module):
-    """Encoder для PatchTST с остаточными соединениями"""
-    
-    def __init__(self, 
-                 e_layers: int = 3,
-                 d_model: int = 256,
-                 n_heads: int = 4,
-                 d_ff: int = 512,
-                 dropout: float = 0.1,
-                 activation: str = 'gelu',
-                 res_attention: bool = True):
-        super().__init__()
-        
-        self.e_layers = e_layers
-        self.d_model = d_model
-        self.res_attention = res_attention
-        
-        # Encoder layers
-        self.encoder_layers = nn.ModuleList([
-            EncoderLayer(
-                d_model=d_model,
-                n_heads=n_heads,
-                d_ff=d_ff,
-                dropout=dropout,
-                activation=activation,
-                res_attention=res_attention
-            ) for _ in range(e_layers)
-        ])
-        
-        self.norm = nn.LayerNorm(d_model)
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x: [Batch, Length, Features]
-        """
-        # Encoder
-        for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)
-            
-        x = self.norm(x)
-        
-        return x
-
-
-class EncoderLayer(nn.Module):
-    """Слой энкодера с multi-head attention"""
-    
-    def __init__(self,
-                 d_model: int,
-                 n_heads: int,
-                 d_ff: int,
-                 dropout: float = 0.1,
-                 activation: str = 'gelu',
-                 res_attention: bool = True):
-        super().__init__()
-        
-        self.res_attention = res_attention
-        
-        # Multi-head attention
-        self.self_attention = nn.MultiheadAttention(
-            embed_dim=d_model,
-            num_heads=n_heads,
-            dropout=dropout,
-            batch_first=True
-        )
-        
-        # Feed forward
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.GELU() if activation == 'gelu' else nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model)
-        )
-        
-        # Normalization
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        
-        # Dropout
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x: [Batch, Length, Features]
-        """
-        # Self attention with residual
-        attn_out, _ = self.self_attention(x, x, x)
-        x = x + self.dropout1(attn_out)
-        x = self.norm1(x)
-        
-        # Feed forward with residual
-        ff_out = self.ff(x)
-        x = x + self.dropout2(ff_out)
-        x = self.norm2(x)
-        
-        return x
 
 
 class UnifiedPatchTSTForTrading(nn.Module):
@@ -861,10 +726,10 @@ class DirectionalMultiTaskLoss(nn.Module):
         class_weights = torch.tensor(config_weights)  # LONG, SHORT, FLAT
         
         # КРИТИЧНО: Логируем фактические веса классов
-        print(f"🔥 DirectionalMultiTaskLoss инициализирована с весами классов: {config_weights}")
-        print(f"   - LONG weight: {config_weights[0]}")
-        print(f"   - SHORT weight: {config_weights[1]}")
-        print(f"   - FLAT weight: {config_weights[2]}")
+        self.logger.info(f"DirectionalMultiTaskLoss class weights: {config_weights}")
+        self.logger.debug(f"LONG weight: {config_weights[0]}")
+        self.logger.debug(f"SHORT weight: {config_weights[1]}")
+        self.logger.debug(f"FLAT weight: {config_weights[2]}")
         
         # Метод 2: Динамическая адаптация весов на основе батча
         # Это позволит модели адаптироваться к локальным распределениям
@@ -910,12 +775,12 @@ class DirectionalMultiTaskLoss(nn.Module):
         self.entropy_min_weight = config.get('loss', {}).get('entropy_min_weight', 0.2)
         self.min_entropy_threshold = config.get('model', {}).get('min_entropy_threshold', 0.5)
         
-        print(f"⚡ Параметры предотвращения схлопывания:")
-        print(f"   - auto_adjust_on_collapse: {self.auto_adjust_on_collapse}")
-        print(f"   - collapse_threshold: {self.collapse_threshold}")  
-        print(f"   - min_entropy: {self.min_entropy}")
-        print(f"   - entropy_min_weight: {self.entropy_min_weight}")
-        print(f"   - min_entropy_threshold: {self.min_entropy_threshold}")
+        self.logger.info("Collapse prevention params:")
+        self.logger.debug(f"auto_adjust_on_collapse: {self.auto_adjust_on_collapse}")
+        self.logger.debug(f"collapse_threshold: {self.collapse_threshold}")  
+        self.logger.debug(f"min_entropy: {self.min_entropy}")
+        self.logger.debug(f"entropy_min_weight: {self.entropy_min_weight}")
+        self.logger.debug(f"min_entropy_threshold: {self.min_entropy_threshold}")
         
     def set_active_losses(self, active_losses: List[str]):
         """
@@ -928,7 +793,7 @@ class DirectionalMultiTaskLoss(nn.Module):
                 ["all"] - все losses
         """
         self.active_losses = active_losses
-        print(f"🎯 Активные losses установлены: {active_losses}")
+        self.logger.info(f"Active losses: {active_losses}")
         
     def set_epoch(self, epoch: int):
         """Установка текущей эпохи для динамических весов"""
@@ -937,57 +802,37 @@ class DirectionalMultiTaskLoss(nn.Module):
     def update_class_weights(self, targets: torch.Tensor):
         """
         Динамическое обновление весов классов на основе текущего батча
-        
         Args:
             targets: направления классов из текущего батча (batch_size, 4)
         """
         if not self.use_dynamic_weights:
             return
-        
         # Извлекаем direction targets
         if isinstance(targets, dict):
             direction_targets = targets.get('directions', targets.get('direction_15m', None))
             if direction_targets is None:
-                return  # Нет direction targets для обновления весов
+                return
             device = direction_targets.device
         else:
-            direction_targets = targets[:, 4:8]  # direction columns
+            direction_targets = targets[:, 4:8]
             device = targets.device
-
-        # Если direction_targets 1D, расширяем до 4 таймфреймов
         if direction_targets.dim() == 1:
             direction_targets = direction_targets.unsqueeze(1).expand(-1, 4)
-
-        # Подсчитываем классы в текущем батче
-        batch_counts = torch.zeros(3, device=device)
-        for i in range(direction_targets.shape[1]):  # По всем таймфреймам
-            for c in range(3):  # По всем классам
-                batch_counts[c] += (direction_targets[:, i] == c).sum().float()
-        
-        # Обновляем скользящее среднее (перемещаем на правильное устройство)
+        flat = direction_targets.reshape(-1)
+        batch_counts = torch.bincount(flat, minlength=3).float()
+        # Держим девайс корректным
         self.running_class_counts = self.running_class_counts.to(device)
         self.total_samples = self.total_samples.to(device)
-        
-        self.running_class_counts = (self.class_weight_momentum * self.running_class_counts + 
-                                     (1 - self.class_weight_momentum) * batch_counts)
-        self.total_samples = self.total_samples + direction_targets.numel()
-        
-        # Вычисляем текущие частоты
-        if self.total_samples > 100:  # Начинаем адаптацию после 100 примеров
-            current_frequencies = self.running_class_counts / self.running_class_counts.sum()
-            current_frequencies = current_frequencies.clamp(min=0.01)  # Избегаем деления на 0
-            
-            # Вычисляем новые веса: inverse frequency с квадратным корнем
-            new_weights = torch.sqrt(1.0 / current_frequencies)
-            new_weights = new_weights / new_weights.mean()  # Нормализация
-            
-            # Плавное обновление весов
-            weight_update_rate = 0.1  # Скорость адаптации
-            self.class_weights = self.class_weights.to(targets.device)
-            self.class_weights = (1 - weight_update_rate) * self.class_weights + weight_update_rate * new_weights
-            
-            # НЕ обновляем cross_entropy_loss здесь - будем использовать веса напрямую в focal_loss
-        
+        m = self.class_weight_momentum
+        self.running_class_counts = m * self.running_class_counts + (1 - m) * batch_counts.to(device)
+        self.total_samples = self.total_samples + float(flat.numel())
+        if self.total_samples > 100:
+            freq = self.running_class_counts / self.running_class_counts.sum().clamp_min(1.0)
+            new_weights = torch.sqrt(1.0 / freq)
+            new_weights = new_weights / new_weights.mean().clamp_min(1e-6)
+            w_rate = 0.1
+            self.class_weights = ((1 - w_rate) * self.class_weights.to(device) + w_rate * new_weights).detach()
+
     def get_dynamic_direction_weight(self) -> float:
         """Получение динамического веса для direction loss с warmup"""
         base_weight = self.directions_weight

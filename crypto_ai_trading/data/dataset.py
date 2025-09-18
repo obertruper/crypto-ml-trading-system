@@ -50,10 +50,10 @@ class TimeSeriesDataset(Dataset):
         # ИСПРАВЛЕНО: Правильный маппинг для торговли
         # LONG=0 (покупка), SHORT=1 (продажа), FLAT=2 (боковик)
         self.categorical_targets = {
-            'direction_15m': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2},
-            'direction_1h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2},
-            'direction_4h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2},
-            'direction_12h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, '0': 0, '1': 1, '2': 2, 0: 0, 1: 1, 2: 2, 0.0: 0, 1.0: 1, 2.0: 2}
+            'direction_15m': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, 0: 0, 1: 1, 2: 2},
+            'direction_1h':  {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, 0: 0, 1: 1, 2: 2},
+            'direction_4h':  {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, 0: 0, 1: 1, 2: 2},
+            'direction_12h': {'LONG': 0, 'SHORT': 1, 'FLAT': 2, 'UP': 0, 'DOWN': 1, 0: 0, 1: 1, 2: 2}
         }
         
         # Определение признаков и целевых переменных
@@ -279,25 +279,24 @@ class TimeSeriesDataset(Dataset):
         
         # ПОЛНАЯ версия: надёжная конвертация в числовые типы
         feature_data = feature_data.copy()
-        
-        # Применяем pd.to_numeric ко всем колонкам для надёжности
-        for col in feature_data.columns:
-            try:
-                # Сначала проверяем тип
-                if pd.api.types.is_object_dtype(feature_data[col]) or pd.api.types.is_categorical_dtype(feature_data[col]):
-                    if pd.api.types.is_categorical_dtype(feature_data[col]):
-                        # Категориальные переменные конвертируем в коды
-                        feature_data[col] = feature_data[col].cat.codes.astype(np.float32)
+
+        # Быстрый путь: если все признаки уже числовые — избегаем постколоночных преобразований
+        if all(pd.api.types.is_numeric_dtype(dt) for dt in feature_data.dtypes):
+            feature_values = feature_data.to_numpy(dtype=np.float32, copy=False)
+        else:
+            # Преобразуем только необходимые колонки
+            for col in feature_data.columns:
+                try:
+                    if pd.api.types.is_object_dtype(feature_data[col]) or pd.api.types.is_categorical_dtype(feature_data[col]):
+                        if pd.api.types.is_categorical_dtype(feature_data[col]):
+                            feature_data[col] = feature_data[col].cat.codes.astype(np.float32)
+                        else:
+                            feature_data[col] = pd.to_numeric(feature_data[col], errors='coerce').fillna(0.0).astype(np.float32)
                     else:
-                        # Object типы конвертируем через pd.to_numeric
-                        feature_data[col] = pd.to_numeric(feature_data[col], errors='coerce').fillna(0.0).astype(np.float32)
-                else:
-                    # Уже числовые типы просто приводим к float32
-                    feature_data[col] = feature_data[col].astype(np.float32)
-            except Exception as e:
-                # Если что-то пошло не так, заполняем нулями
-                feature_data[col] = np.zeros(len(feature_data), dtype=np.float32)
-        
+                        feature_data[col] = feature_data[col].astype(np.float32)
+                except Exception:
+                    feature_data[col] = np.zeros(len(feature_data), dtype=np.float32)
+
         # Получаем массив и финальная очистка от inf/nan
         feature_values = feature_data.values
         feature_values = np.nan_to_num(feature_values, nan=0.0, posinf=0.0, neginf=0.0)

@@ -131,27 +131,27 @@ loss:
     short_levels: 0.5
     risk_metrics: 0.4
   class_weights:
-  - 5.0
-  - 5.0
-  - 0.2
-  use_weighted_sampling: true
-  adaptive_class_weights: true
-  use_dynamic_class_weights: true
+  - 1.5  # LONG: умеренное усиление для балансировки
+  - 1.5  # SHORT: умеренное усиление для балансировки
+  - 0.8  # FLAT: мягкое ослабление (было 0.5 - слишком агрессивно)
+  use_weighted_sampling: false  # ОТКЛЮЧЕНО: создает обратный дисбаланс!
+  adaptive_class_weights: false  # ОТКЛЮЧЕНО: меняет веса динамически
+  use_dynamic_class_weights: false  # ОТКЛЮЧЕНО: меняет веса динамически
   flat_preservation_weight: 0.0
   min_flat_ratio: 0.2
-  entropy_regularization: 2.0
-  min_entropy_weight: 1.0
-  entropy_min_weight: 0.8
-  label_smoothing: 0.2
+  entropy_regularization: 0.5  # УВЕЛИЧЕНО для принуждения к разнообразию предсказаний
+  min_entropy_weight: 0.1  # УМЕНЬШЕНО с 1.0
+  entropy_min_weight: 0.1  # УМЕНЬШЕНО с 0.8
+  label_smoothing: 0.15  # УВЕЛИЧЕНО для борьбы с переобучением и коллапсом
   auto_adjust_on_collapse: true
   collapse_threshold: 0.5
   min_entropy: 1.0
   large_move_threshold: 0.003
   large_move_weight: 8.0
-  use_focal_loss: true
-  focal_alpha: 0.7
-  focal_gamma: 5.0
-  wrong_direction_penalty: 5.0
+  use_focal_loss: false  # ОТКЛЮЧЕНО: может вызывать коллапс
+  focal_alpha: 0.25  # уменьшено для баланса
+  focal_gamma: 2.0  # ИСПРАВЛЕНО с 5.0 - было слишком высоким
+  wrong_direction_penalty: 2.0  # ИСПРАВЛЕНО с 5.0 - слишком сильное наказание
   direction_warmup: 0.8
   warmup_epochs: 15
   max_flat_ratio: 0.5
@@ -174,7 +174,7 @@ model:
   gradient_accumulation_steps: 2
   individual: false
   input_size: 261
-  learning_rate: 0.0001
+  learning_rate: 0.00005
   min_delta: 0.0001
   n_heads: 8
   name: UnifiedPatchTST
@@ -186,8 +186,8 @@ model:
   compile_model: false
   use_tf32: true
   use_anti_collapse: true
-  temperature_scaling: true
-  temperature: 5.0
+  temperature_scaling: false  # ОТКЛЮЧЕНО: T=5.0 разрушает градиенты!
+  temperature: 1.0
   head: hierarchical
   hierarchical:
     loss_weights:
@@ -252,16 +252,16 @@ model:
   feature_attention: true
   multi_scale_patches: true
   direction_head_init:
-    bias_init: anti_collapse
-    weight_scale: 3.0
+    bias_init: zeros  # ИСПРАВЛЕНО: anti_collapse может создавать проблемы
+    weight_scale: 1.0  # ИСПРАВЛЕНО с 3.0 - нормальный масштаб
     method: xavier_uniform
-    add_noise: true
-    noise_scale: 0.1
+    add_noise: false  # ОТКЛЮЧЕНО: шум может мешать стабильности
+    noise_scale: 0.01
   direction_bias:
-  - 0.0
-  - 0.0
-  - 0.0
-  anti_collapse_strength: 2.0
+  - 0.2   # LONG: умеренный положительный bias
+  - 0.2   # SHORT: умеренный положительный bias
+  - 0.1   # FLAT: лёгкий положительный bias для восстановления
+  anti_collapse_strength: 0.5  # УМЕНЬШЕНО с 2.0
 optimizer:
   name: AdamW
   params:
@@ -402,27 +402,6 @@ validation:
     no_shuffle: true
     gap_between_splits: true
 # staged_training удален - использовал model.eval() во время обучения и вызывал коллапс
-      \u0440\u0438\u043A \u0434\u043B\u044F production"
-    epochs: 15
-    learning_rate: 1.0e-05
-    dropout: 0.35
-    gradient_accumulation_steps: 4
-    gradient_clip: 0.1
-    batch_size: 8192
-    class_weights:
-    - 0.9
-    - 0.9
-    - 1.1
-    direction_bias:
-    - 0.0
-    - 0.0
-    - 0.0
-    label_smoothing: 0.02
-    temperature: 0.8
-    confidence_threshold: 0.6
-    early_stopping_patience: 5
-    monitor_metric: combined
-    target_f1: 0.45
     target_win_rate: 0.5
   collapse_prevention:
     min_flat_ratio: 0.2

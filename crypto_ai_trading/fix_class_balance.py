@@ -8,8 +8,6 @@ from omegaconf import DictConfig, OmegaConf
 import sys
 import numpy as np
 
-# Добавляем путь к проекту
-sys.path.append('/mnt/SSD/PYCHARMPRODJECT/LLM TRANSFORM/crypto_ai_trading')
 
 from models.patchtst_unified import UnifiedPatchTST
 from utils.logger import get_logger
