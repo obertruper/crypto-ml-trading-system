@@ -151,7 +151,8 @@ def optimize_memory_usage(df: pd.DataFrame, logger) -> pd.DataFrame:
 def prepare_features_for_trading(config: dict, logger, force_recreate: bool = False,
                                  workers: int | None = None,
                                  sequential: bool = False,
-                                 no_cache: bool = False):
+                                 no_cache: bool = False,
+                                 clean_cache: bool = False):
     """Подготовка признаков для торговой модели"""
     
     logger.info("\n" + "="*80)
@@ -160,6 +161,31 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
     if force_recreate:
         logger.info("🔄 Принудительное пересоздание кэша включено")
     logger.info("="*80)
+
+    # Очистка кешей по запросу
+    if clean_cache:
+        import shutil
+        from pathlib import Path
+        cleared = []
+        for path in [Path('cache/features'), Path('cache/precomputed')]:
+            if path.exists():
+                try:
+                    shutil.rmtree(path)
+                    cleared.append(str(path))
+                except Exception:
+                    pass
+        for path in [Path('models_saved/data_scaler.pkl')]:
+            if path.exists():
+                try:
+                    path.unlink()
+                    cleared.append(str(path))
+                except Exception:
+                    pass
+        if cleared:
+            logger.info(f'Cleared caches: {cleared}')
+        Path('cache/features').mkdir(parents=True, exist_ok=True)
+        Path('cache/precomputed').mkdir(parents=True, exist_ok=True)
+
     
     # Проверка БД
     success, data_loader = check_database_connection(config, logger)
@@ -492,6 +518,8 @@ def main():
                        help='Последовательная обработка без multiprocessing (отладка)')
     parser.add_argument('--no-cache', action='store_true',
                        help='Игнорировать feature cache и пересчитывать признаки')
+    parser.add_argument('--clean-cache', action='store_true',
+                       help='Очистить кеши (cache/features, cache/precomputed) перед подготовкой')
     
     args = parser.parse_args()
     
@@ -512,7 +540,8 @@ def main():
         force_recreate=args.force_recreate,
         workers=args.workers,
         sequential=args.sequential,
-        no_cache=args.no_cache
+        no_cache=args.no_cache,
+        clean_cache=args.clean_cache
     )
     
     if result and not args.analyze_only:

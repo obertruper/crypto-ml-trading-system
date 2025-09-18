@@ -44,3 +44,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Unified CLI for evaluation and monitoring')
+    sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('monitor', help='Run training monitor')
+    sub.add_parser('eval', help='Run simple evaluation')
+    sub.add_parser('validate-indicators', help='Run indicators validation')
+    args = parser.parse_args()
+    if args.command == 'monitor':
+        subprocess.run([sys.executable, 'monitor_training.py'], check=False)
+    elif args.command == 'eval':
+        subprocess.run([sys.executable, 'evaluate_model_simple.py'], check=False)
+    elif args.command == 'validate-indicators':
+        subprocess.run([sys.executable, 'validate_indicators.py'], check=False)
+
+if __name__ == '__main__':
+    main()
