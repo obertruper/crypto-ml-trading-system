@@ -716,7 +716,8 @@ class Trainer:
                 self.best_val_loss = val_metrics['loss']
                 self.patience_counter = 0
                 self.consecutive_overfitting = 0
-                self.best_model_state = self.model.state_dict().copy()
+                import copy
+                self.best_model_state = copy.deepcopy(self.model.state_dict())
                 self._save_checkpoint(epoch, val_metrics['loss'], is_best=True)
                 self.logger.info(f"✅ Новая лучшая модель! Val loss улучшен на {improvement:.6f}")
             else:

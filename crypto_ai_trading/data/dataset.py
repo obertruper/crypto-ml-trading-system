@@ -60,7 +60,8 @@ class TimeSeriesDataset(Dataset):
         if feature_cols is None:
             self.feature_cols = [col for col in data.columns 
                                if col not in ['id', 'symbol', 'datetime', 'timestamp', 'sector']
-                               and not col.startswith(('target_', 'future_', 'optimal_'))]
+                               and not col.startswith(('target_', 'future_', 'optimal_'))
+                               and all(kw not in col for kw in ('expected_value', 'optimal_entry', '_tp', '_sl'))]
         else:
             self.feature_cols = feature_cols
 
@@ -645,7 +646,8 @@ class MultiSymbolDataset(Dataset):
         if feature_cols is None:
             self.feature_cols = [col for col in data.columns 
                                if col not in ['id', 'symbol', 'datetime', 'timestamp', 'sector']
-                               and not col.startswith(('target_', 'future_', 'optimal_'))]
+                               and not col.startswith(('target_', 'future_', 'optimal_'))
+                               and all(kw not in col for kw in ('expected_value', 'optimal_entry', '_tp', '_sl'))]
         else:
             self.feature_cols = feature_cols
         

@@ -1743,34 +1743,48 @@ class FeatureEngineer:
             ]
             df[f'direction_{period_name}'] = np.select(conditions, [0, 1], default=2)
         
-        # C. Достижение уровней прибыли LONG (4) - используем только shift для будущих цен
+        # C. Достижение уровней прибыли LONG (4) — правильный расчет будущих максимумов
         for level_name, (profit_threshold, n_candles) in profit_levels.items():
+            # ИСПРАВЛЕНО: Используем rolling по будущим данным правильно
+            # Для каждой точки смотрим максимум в окне [t+1, t+n_candles]
             future_max_high = df.groupby('symbol')['high'].transform(
-                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).max()
+                lambda x: pd.concat([
+                    x.shift(-i) for i in range(1, n_candles + 1)
+                ], axis=1).max(axis=1) if len(x) > 0 else x
             )
             future_return = (future_max_high / df['close'] - 1)
             df[f'long_will_reach_{level_name}'] = (future_return >= profit_threshold).astype(int)
 
-        # D. Достижение уровней прибыли SHORT (4)
+        # D. Достижение уровней прибыли SHORT (4) — правильный расчет будущих минимумов
         for level_name, (profit_threshold, n_candles) in profit_levels.items():
+            # ИСПРАВЛЕНО: Используем rolling по будущим данным правильно
+            # Для каждой точки смотрим минимум в окне [t+1, t+n_candles]
             future_min_low = df.groupby('symbol')['low'].transform(
-                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).min()
+                lambda x: pd.concat([
+                    x.shift(-i) for i in range(1, n_candles + 1)
+                ], axis=1).min(axis=1) if len(x) > 0 else x
             )
             future_return = (df['close'] / future_min_low - 1)
             df[f'short_will_reach_{level_name}'] = (future_return >= profit_threshold).astype(int)
 
         # E. Риск-метрики (4)
-        # Максимальная просадка за период (для LONG)
+        # Максимальная просадка за период (для LONG) — минимум в будущем окне
         for period_name, n_candles in [('1h', 4), ('4h', 16)]:
+            # ИСПРАВЛЕНО: Минимальная цена в будущем окне [t+1, t+n_candles]
             min_price = df.groupby('symbol')['low'].transform(
-                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).min()
+                lambda x: pd.concat([
+                    x.shift(-i) for i in range(1, n_candles + 1)
+                ], axis=1).min(axis=1) if len(x) > 0 else x
             )
             df[f'max_drawdown_{period_name}'] = ((df['close'] - min_price) / df['close']).clip(lower=0).fillna(0)
 
-        # Максимальный рост за период (для SHORT)
+        # Максимальный рост за период (для SHORT) — максимум в будущем окне
         for period_name, n_candles in [('1h', 4), ('4h', 16)]:
+            # ИСПРАВЛЕНО: Максимальная цена в будущем окне [t+1, t+n_candles]
             max_price = df.groupby('symbol')['high'].transform(
-                lambda x: x.shift(-1).rolling(window=n_candles, min_periods=1).max()
+                lambda x: pd.concat([
+                    x.shift(-i) for i in range(1, n_candles + 1)
+                ], axis=1).max(axis=1) if len(x) > 0 else x
             )
             df[f'max_rally_{period_name}'] = (max_price / df['close'] - 1).clip(lower=0).fillna(0)
         
@@ -1790,26 +1804,14 @@ class FeatureEngineer:
         # Все необходимые целевые переменные уже созданы выше
         
         # Фиктивные временные переменные для совместимости
-        df['long_tp1_time'] = 16  # 4 часа
         df['long_tp2_time'] = 16
-        df['long_tp3_time'] = 48  # 12 часов
-        df['long_sl_time'] = 100
-        df['short_tp1_time'] = 16
         df['short_tp2_time'] = 16
-        df['short_tp3_time'] = 48
-        df['short_sl_time'] = 100
         
         # Expected value для совместимости
-        df['long_expected_value'] = df['future_return_4h'] * df['long_will_reach_2pct_4h'] * 2.0
-        df['short_expected_value'] = -df['future_return_4h'] * df['short_will_reach_2pct_4h'] * 2.0
         
         # Optimal entry фиктивные переменные
-        df['long_optimal_entry_time'] = 1
         df['long_optimal_entry_price'] = df['close']
-        df['long_optimal_entry_improvement'] = 0
-        df['short_optimal_entry_time'] = 1
         df['short_optimal_entry_price'] = df['close']
-        df['short_optimal_entry_improvement'] = 0
         
         # Итоговая статистика
         if not self.disable_progress:
