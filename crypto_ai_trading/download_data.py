@@ -60,18 +60,37 @@ class PostgreSQLManager:
         self.connection_pool = None
         self.max_connections = max_connections
 
+    def _sanitize_db_config(self) -> dict:
+        """Преобразует config.yaml -> psycopg2 dsn (dbname,user,password,host,port,...)"""
+        cfg = self.db_config.copy()
+        params = {}
+        if 'dbname' in cfg:
+            params['dbname'] = cfg['dbname']
+        elif 'database' in cfg:
+            params['dbname'] = cfg['database']
+        for k in ('user', 'password', 'host', 'port', 'options', 'sslmode'):
+            if k in cfg and cfg[k] not in (None, ''):
+                params[k] = cfg[k]
+        if 'port' in params:
+            try:
+                params['port'] = int(params['port'])
+            except Exception:
+                params.pop('port', None)
+        return params
+
     def connect(self):
         """Создает пул подключений к БД для многопоточности"""
         try:
             # Создаем пул соединений
+            conn_params = self._sanitize_db_config()
             self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
-                1,  # минимум соединений
-                self.max_connections,  # максимум соединений
-                **self.db_config
+                1,
+                self.max_connections,
+                **conn_params
             )
             
             # Основное соединение для однопоточных операций
-            self.connection = psycopg2.connect(**self.db_config)
+            self.connection = psycopg2.connect(**conn_params)
             self.connection.autocommit = True
             
             logger.info(f"✅ Пул подключений к PostgreSQL создан (max: {self.max_connections})")
@@ -713,7 +732,12 @@ def main():
 
     # Загружаем конфигурацию
     import yaml
-    with open('config.yaml', 'r') as f:
+    config_path = 'config.yaml'
+    if not os.path.exists(config_path):
+        alt = 'config/config.yaml'
+        if os.path.exists(alt):
+            config_path = alt
+    with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
     db_config = config['database']
@@ -742,7 +766,8 @@ def main():
         logger.info(f"🚀 Начинаем загрузку данных для {len(top_symbols)} символов в PostgreSQL")
         logger.info(f"📊 Таймфрейм: {interval} минут")
         logger.info(f"📅 Период: {days} дней")
-        logger.info(f"🗃️ База данных: {db_config['dbname']}")
+        db_name = db_config.get('dbname') or db_config.get('database')
+        logger.info(f"🗃️ База данных: {db_name}")
         logger.info(f"📈 Тип рынка: {market_type.upper()}")
         
         # Определяем количество потоков (по умолчанию 25)

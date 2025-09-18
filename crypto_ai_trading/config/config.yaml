@@ -21,12 +21,11 @@ bybit:
 data:
   end_date: latest
   interval_minutes: 15
-  start_date: '2018-01-01'
+  start_date: '2020-01-01'
   symbols:
   - BTCUSDT
   - ETHUSDT
   - SOLUSDT
-  - 1INCHUSDT
   test_ratio: 0.2
   train_ratio: 0.6
   val_ratio: 0.2
@@ -427,3 +426,13 @@ validation:
       min_flat_ratio: 0.35
       max_flat_ratio: 0.55
       min_entropy: 0.9
+
+data_download:
+  market_type: futures
+  interval: '15'
+  days: 2200
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  max_workers: 20

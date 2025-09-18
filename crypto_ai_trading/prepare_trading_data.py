@@ -182,6 +182,12 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
         start_date=config['data']['start_date'],
         end_date=config['data']['end_date']
     )
+    if raw_data is None or raw_data.empty:
+        logger.error('❌ В базе данных нет записей по указанным символам/датам.')
+        logger.error('   Заполните БД историческими данными:')
+        logger.error('   python download_data.py    # загрузка данных из Bybit/...')
+        return None
+
     
     logger.info(f"✅ Загружено {len(raw_data):,} записей")
     
@@ -317,6 +323,23 @@ def prepare_features_for_trading(config: dict, logger, force_recreate: bool = Fa
     
     logger.info("🔄 Создание cross-asset признаков...")
     processed_data = feature_engineer._create_cross_asset_features(processed_data)
+
+    # Удаляем строки с NaN в целевых переменных (хвосты рядов без достаточного будущего горизонта)
+    required_targets = [
+        'future_return_15m','future_return_1h','future_return_4h','future_return_12h',
+        'direction_15m','direction_1h','direction_4h','direction_12h',
+        'long_will_reach_1pct_4h','long_will_reach_2pct_4h','long_will_reach_3pct_12h','long_will_reach_5pct_12h',
+        'short_will_reach_1pct_4h','short_will_reach_2pct_4h','short_will_reach_3pct_12h','short_will_reach_5pct_12h',
+        'max_drawdown_1h','max_rally_1h','max_drawdown_4h','max_rally_4h'
+    ]
+    if any(col in processed_data.columns for col in required_targets):
+        before = len(processed_data)
+        processed_data = processed_data.dropna(subset=[c for c in required_targets if c in processed_data.columns])
+        after = len(processed_data)
+        dropped = before - after
+        if dropped > 0:
+            logger.info(f'Dropped rows with NaN in targets: {dropped}')
+
 
     # Пост-проверка наличия ключевых целевых колонок
     required_targets = [

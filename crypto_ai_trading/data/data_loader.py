@@ -539,11 +539,15 @@ class CryptoDataLoader:
                 raise ValueError(f"Некорректный символ: {symbol}")
     
     def _validate_dates(self, start_date: str, end_date: str):
-        """Валидация дат"""
+        """Валидация дат с поддержкой специальных значений."""
         try:
-            start = pd.to_datetime(start_date)
-            end = pd.to_datetime(end_date)
-            if start >= end:
+            specials = {"latest", "now", "today", "current"}
+            if isinstance(end_date, str) and end_date.strip().lower() in specials:
+                end_val = pd.Timestamp.utcnow()
+            else:
+                end_val = pd.to_datetime(end_date)
+            start_val = pd.to_datetime(start_date)
+            if start_val >= end_val:
                 raise ValueError("Начальная дата должна быть раньше конечной")
         except Exception as e:
             raise ValueError(f"Некорректный формат даты: {e}")
